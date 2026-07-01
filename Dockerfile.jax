@@ -12,7 +12,6 @@ FROM rocm/jax:${ROCM_JAX_TAG}
 
 # See notes in ./Dockerfile — same gfx1151 override story. Try native first.
 # ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
-ENV PYTORCH_ROCM_ARCH=gfx1151
 
 WORKDIR /workspace
 

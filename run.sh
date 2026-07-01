@@ -11,6 +11,11 @@
 # The docker run flags here are the Framework Desktop / ROCm essentials:
 # device passthrough for /dev/kfd and /dev/dri, membership in the render/video
 # groups, and a relaxed seccomp profile that ROCm's userspace requires.
+#
+# Env overrides:
+#   ROCM_PYTORCH_TAG / ROCM_JAX_TAG  build a non-default base image tag
+#                                    (default lives in the Dockerfile ARG)
+#   ROCM_ROOT=1                      run as root instead of your host user
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,13 +29,13 @@ case "${FRAMEWORK}" in
   pytorch)
     IMAGE="framework-rocm:pytorch"
     DOCKERFILE="Dockerfile"
-    BUILD_ARG="ROCM_PYTORCH_TAG=${ROCM_PYTORCH_TAG:-rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0}"
+    TAG_ENV="ROCM_PYTORCH_TAG"   # canonical default lives in the Dockerfile ARG
     CHECK="/usr/local/bin/check_gpu.py"
     ;;
   jax)
     IMAGE="framework-rocm:jax"
     DOCKERFILE="Dockerfile.jax"
-    BUILD_ARG="ROCM_JAX_TAG=${ROCM_JAX_TAG:-rocm7.2.4-jax0.8.2-py3.12}"
+    TAG_ENV="ROCM_JAX_TAG"       # canonical default lives in the Dockerfile ARG
     CHECK="/usr/local/bin/check_jax.py"
     ;;
   *)
@@ -56,20 +61,35 @@ docker_run() {
   if [ -t 0 ] && [ -t 1 ]; then
     tty_flags=(-it)
   fi
-  docker run --rm "${tty_flags[@]}" \
+  # Map the container process to the host user by default so files written to
+  # the bind-mounted workspace aren't root-owned. ROCM_ROOT=1 keeps root (needed
+  # if you pip-install into system site-packages inside the container).
+  local user_flags=()
+  if [ -z "${ROCM_ROOT:-}" ]; then
+    user_flags=(--user "$(id -u):$(id -g)")
+  fi
+  docker run --rm "${tty_flags[@]}" "${user_flags[@]}" \
     --device=/dev/kfd \
     --device=/dev/dri \
     --group-add "${VIDEO_GID}" \
     --group-add "${RENDER_GID}" \
     --security-opt seccomp=unconfined \
     --ipc=host \
+    -e EXPECTED_ARCH -e STRICT_ARCH -e EXPECTED_DEVICE -e STRICT_DEVICE \
     -v "${HERE}/workspace:/workspace" \
     "${IMAGE}" "$@"
 }
 
 case "${ACTION}" in
   build)
-    docker build -f "${HERE}/${DOCKERFILE}" --build-arg "${BUILD_ARG}" -t "${IMAGE}" "${HERE}"
+    # Pass --build-arg only when the tag is overridden; otherwise use the
+    # Dockerfile ARG default (the single source of truth for the base tag).
+    build_args=()
+    tag_val="${!TAG_ENV:-}"
+    if [ -n "${tag_val}" ]; then
+      build_args=(--build-arg "${TAG_ENV}=${tag_val}")
+    fi
+    docker build -f "${HERE}/${DOCKERFILE}" "${build_args[@]}" -t "${IMAGE}" "${HERE}"
     ;;
   shell)
     docker_run /bin/bash

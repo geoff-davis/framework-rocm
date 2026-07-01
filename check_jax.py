@@ -4,7 +4,13 @@
 Prints JAX/jaxlib versions and the detected devices, then runs a tiny matmul on
 the GPU to confirm compute actually works — not just that a device is
 enumerated. Exits non-zero if no GPU-backed device is usable.
+
+JAX doesn't expose the gfx arch, so to catch a silent fallback to the wrong GPU
+it checks the device's reported kind against EXPECTED_DEVICE (default
+"Radeon 8060S"). A mismatch prints a warning; set STRICT_DEVICE=1 to make it a
+hard failure, or EXPECTED_DEVICE= to skip.
 """
+import os
 import sys
 
 
@@ -38,8 +44,18 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    # Actually exercise the GPU.
     dev = gpu_devices[0]
+    kind = getattr(dev, "device_kind", "") or ""
+    print(f"device kind   : {kind}")
+    expected = os.environ.get("EXPECTED_DEVICE", "Radeon 8060S")
+    if expected and expected not in kind:
+        print(f"WARNING: expected device '{expected}' not in '{kind}' — wrong GPU "
+              "or a fallback may be active (set EXPECTED_DEVICE= to silence).",
+              file=sys.stderr)
+        if os.environ.get("STRICT_DEVICE"):
+            return 3
+
+    # Actually exercise the GPU.
     a = jax.device_put(jnp.ones((1024, 1024)), dev)
     b = jax.device_put(jnp.ones((1024, 1024)), dev)
     c = (a @ b).sum().block_until_ready()

@@ -14,22 +14,21 @@
 # and the DRI render nodes; the render/video groups own them; ROCm's userspace
 # trips the default seccomp profile.
 #
-# The GIDs come from a .env file because they're host-specific AND because the
-# container's group file usually has no `render`/`video` entry (passing the
-# names fails with "unable to find group render"). Generate .env once:
-#
-#   printf 'RENDER_GID=%s\nVIDEO_GID=%s\n' \
-#     "$(getent group render | cut -d: -f3)" \
-#     "$(getent group video  | cut -d: -f3)" > .env
-#
-# (The run.sh wrapper resolves these automatically and needs no .env.)
+# The GIDs, and the host UID/GID for user mapping, come from a .env file:
+# they're host-specific, and the container's group file usually has no
+# `render`/`video` entry (passing the names fails with "unable to find group
+# render"), so numeric GIDs are required. Copy .env.example to .env and fill it
+# in — the one-liner in .env.example generates all four values. HOST_UID/GID
+# default to 0 (root) if unset. (The run.sh wrapper needs no .env.)
 x-rocm-gpu: &rocm-gpu
   devices:
     - /dev/kfd
     - /dev/dri
   group_add:
-    - "${VIDEO_GID:?set VIDEO_GID in .env — see comment in compose.yaml}"
-    - "${RENDER_GID:?set RENDER_GID in .env — see comment in compose.yaml}"
+    - "${VIDEO_GID:?set VIDEO_GID in .env — copy .env.example}"
+    - "${RENDER_GID:?set RENDER_GID in .env — copy .env.example}"
+  # Map to the host user so mounted files aren't root-owned; 0:0 = root.
+  user: "${HOST_UID:-0}:${HOST_GID:-0}"
   security_opt:
     - seccomp=unconfined
   ipc: host
@@ -38,15 +37,14 @@ x-rocm-gpu: &rocm-gpu
   stdin_open: true
   tty: true
 
+# Base image tags default to the Dockerfile ARG (single source of truth).
+# Override per build: docker compose build --build-arg ROCM_PYTORCH_TAG=<tag> pytorch
 services:
   pytorch:
     <<: *rocm-gpu
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        # Override: docker compose build --build-arg ROCM_PYTORCH_TAG=...
-        ROCM_PYTORCH_TAG: rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0
     image: framework-rocm:pytorch
 
   jax:
@@ -54,7 +52,4 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.jax
-      args:
-        # Override: docker compose build --build-arg ROCM_JAX_TAG=...
-        ROCM_JAX_TAG: rocm7.2.4-jax0.8.2-py3.12
     image: framework-rocm:jax

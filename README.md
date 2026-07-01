@@ -42,7 +42,19 @@ share the same device passthrough, gfx1151 specifics, and smoke-test pattern.
 
 ## Quick start
 
-Pick a framework — `pytorch` or `jax`. With Compose:
+Pick a framework — `pytorch` or `jax`.
+
+**With Compose**, first create a `.env` (host-specific GIDs + your UID/GID —
+the compose path needs it; `run.sh` does not):
+
+```bash
+cp .env.example .env      # then edit, or just generate it:
+printf 'RENDER_GID=%s\nVIDEO_GID=%s\nHOST_UID=%s\nHOST_GID=%s\n' \
+  "$(getent group render | cut -d: -f3)" "$(getent group video | cut -d: -f3)" \
+  "$(id -u)" "$(id -g)" > .env
+```
+
+Then:
 
 ```bash
 docker compose build pytorch                                        # or: jax
@@ -51,7 +63,8 @@ docker compose run --rm jax     python /usr/local/bin/check_jax.py  # smoke test
 docker compose run --rm pytorch                                     # interactive shell
 ```
 
-Or with the plain-`docker` wrapper (first arg is the framework):
+Or with the plain-`docker` wrapper (first arg is the framework; no `.env`
+needed — it resolves the GIDs and maps your user automatically):
 
 ```bash
 ./run.sh pytorch build
@@ -68,6 +81,7 @@ torch version : 2.10.0+rocm7.2.4.git3d3aa833
 ROCm/HIP ver  : 7.2.53211
 device count  : 1
   [0] Radeon 8060S Graphics
+gpu arch      : gfx1151
 matmul OK     : sum=… on Radeon 8060S Graphics
 ```
 
@@ -77,8 +91,19 @@ matmul OK     : sum=… on Radeon 8060S Graphics
 jax version   : 0.8.2
 jaxlib version: 0.8.2+rocm7.2.4
 devices       : [RocmDevice(id=0)]
+device kind   : Radeon 8060S Graphics
 matmul OK     : sum=1073741824.0 on rocm:0
 ```
+
+Both tests verify the device *arch/kind* matches gfx1151 / the Radeon 8060S, so
+a silent fallback to the wrong GPU shows up instead of passing quietly. On a
+different card, set `EXPECTED_ARCH=` / `EXPECTED_DEVICE=` to silence the warning,
+or `STRICT_ARCH=1` / `STRICT_DEVICE=1` to make a mismatch a hard failure.
+
+Containers run as your host user by default (so files written to `workspace/`
+aren't root-owned). If you need to `pip install` into system site-packages
+inside the container, run as root: `ROCM_ROOT=1 ./run.sh pytorch shell`, or set
+`HOST_UID=0`/`HOST_GID=0` in `.env` for the compose path.
 
 ## What makes the GPU visible
 

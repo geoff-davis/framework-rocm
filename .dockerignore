@@ -1,0 +1,23 @@
+# Keep the build context tiny — only the Dockerfiles' COPY targets are needed
+# (requirements*.txt, check_*.py). .gitignore does NOT affect Docker, so this
+# must be listed separately.
+.git
+.gitignore
+.dockerignore
+
+# Host-specific / secret-ish
+.env
+.env.example
+
+# Local work mounted at runtime, never needed at build time
+workspace/
+
+# Python / notebook cruft
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
