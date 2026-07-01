@@ -12,16 +12,24 @@
 
 # Shared GPU access + mounts. ROCm needs the kernel fusion driver (/dev/kfd)
 # and the DRI render nodes; the render/video groups own them; ROCm's userspace
-# trips the default seccomp profile. Group IDs vary per distro — if names don't
-# resolve inside the container, `getent group render video` on the host shows
-# the numeric GIDs.
+# trips the default seccomp profile.
+#
+# The GIDs come from a .env file because they're host-specific AND because the
+# container's group file usually has no `render`/`video` entry (passing the
+# names fails with "unable to find group render"). Generate .env once:
+#
+#   printf 'RENDER_GID=%s\nVIDEO_GID=%s\n' \
+#     "$(getent group render | cut -d: -f3)" \
+#     "$(getent group video  | cut -d: -f3)" > .env
+#
+# (The run.sh wrapper resolves these automatically and needs no .env.)
 x-rocm-gpu: &rocm-gpu
   devices:
     - /dev/kfd
     - /dev/dri
   group_add:
-    - video
-    - render
+    - "${VIDEO_GID:?set VIDEO_GID in .env — see comment in compose.yaml}"
+    - "${RENDER_GID:?set RENDER_GID in .env — see comment in compose.yaml}"
   security_opt:
     - seccomp=unconfined
   ipc: host

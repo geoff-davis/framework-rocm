@@ -1,3 +1,6 @@
+# Host-specific render/video GIDs for the compose path (generate per machine).
+.env
+
 # Local work — don't commit whatever you mount into the container.
 /workspace/*
 !/workspace/.gitkeep

@@ -39,12 +39,28 @@ case "${FRAMEWORK}" in
     ;;
 esac
 
+# Resolve the host's render/video GIDs numerically. The container's group file
+# usually has no `render`/`video` entry, so passing the names to --group-add
+# fails ("unable to find group render"); the numeric GID always works. Falls
+# back to the name if the group isn't found on the host.
+host_gid() {
+  getent group "$1" | cut -d: -f3 | grep . || echo "$1"
+}
+RENDER_GID="$(host_gid render)"
+VIDEO_GID="$(host_gid video)"
+
 docker_run() {
-  docker run --rm -it \
+  # Only request an interactive TTY when we actually have one, so `check` and
+  # scripted commands work from non-interactive shells (CI, background jobs).
+  local tty_flags=()
+  if [ -t 0 ] && [ -t 1 ]; then
+    tty_flags=(-it)
+  fi
+  docker run --rm "${tty_flags[@]}" \
     --device=/dev/kfd \
     --device=/dev/dri \
-    --group-add video \
-    --group-add render \
+    --group-add "${VIDEO_GID}" \
+    --group-add "${RENDER_GID}" \
     --security-opt seccomp=unconfined \
     --ipc=host \
     -v "${HERE}/workspace:/workspace" \
