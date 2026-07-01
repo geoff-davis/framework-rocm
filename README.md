@@ -24,6 +24,11 @@ share the same device passthrough, gfx1151 specifics, and smoke-test pattern.
 > coverage), and the community runs real PyTorch workloads on it. This repo
 > defaults to 7.2.4 for that reason. If you want to stay strictly on the
 > officially-supported stack, pin a 6.4.4 tag instead (see below).
+>
+> Both images here were **verified on an actual Framework Desktop**: the ROCm
+> 7.2.4 `rocm/pytorch` and `rocm/jax` bases both see gfx1151 (Radeon 8060S) and
+> run GPU compute *natively* — no `HSA_OVERRIDE_GFX_VERSION` and no gfx1151
+> fallback wheels required.
 
 ## Requirements (host)
 
@@ -59,20 +64,20 @@ Or with the plain-`docker` wrapper (first arg is the framework):
 A successful PyTorch smoke test looks roughly like:
 
 ```
-torch version : 2.10.0+rocm7.2.4
-ROCm/HIP ver  : 7.2.xxxxx
+torch version : 2.10.0+rocm7.2.4.git3d3aa833
+ROCm/HIP ver  : 7.2.53211
 device count  : 1
-  [0] AMD Radeon Graphics
-matmul OK     : sum=… on AMD Radeon Graphics
+  [0] Radeon 8060S Graphics
+matmul OK     : sum=… on Radeon 8060S Graphics
 ```
 
 …and the JAX one:
 
 ```
 jax version   : 0.8.2
-jaxlib version: 0.8.2
+jaxlib version: 0.8.2+rocm7.2.4
 devices       : [RocmDevice(id=0)]
-matmul OK     : sum=1048576.0 on RocmDevice(id=0)
+matmul OK     : sum=1073741824.0 on rocm:0
 ```
 
 ## What makes the GPU visible
