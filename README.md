@@ -166,13 +166,12 @@ There's a commented line for it in both the `Dockerfile` and `compose.yaml`.
 **Try without it first** — the override can mask real problems and cost
 performance. Only enable it if the native path genuinely fails.
 
-**If the image's bundled PyTorch doesn't see gfx1151 at all**, the robust fix
-is to reinstall PyTorch from AMD's gfx1151-aware wheel index (the stock
-pytorch.org wheels don't include gfx1151 kernels). Add to the `Dockerfile`
-after the `FROM`, matching the index URL to your ROCm version:
+**If the image's bundled framework doesn't see gfx1151 at all**, reinstall from
+AMD's gfx1151-aware wheel index — the stock PyPI / pytorch.org wheels don't
+include gfx1151 kernels.
 
-For **PyTorch**, reinstall from AMD's gfx1151-aware wheel index (add to
-`Dockerfile` after the `FROM`, matching the index URL to your ROCm version):
+For **PyTorch**, add to `Dockerfile` after the `FROM` (match the index URL to
+your ROCm version):
 
 ```dockerfile
 RUN pip install --no-cache-dir --force-reinstall \
@@ -204,6 +203,8 @@ requirements.txt     # extra deps for the PyTorch image (keep minimal)
 requirements-jax.txt # extra deps for the JAX image (keep minimal)
 check_gpu.py         # PyTorch smoke test: versions, devices, real GPU matmul
 check_jax.py         # JAX smoke test: versions, devices, real GPU matmul
+scripts/check.sh     # hardware-free static checks (also run in CI)
+.github/workflows/   # CI: runs scripts/check.sh on push / PR
 workspace/           # bind-mounted into /workspace (git-ignored)
 ```
 
@@ -213,6 +214,22 @@ Put extra deps in `requirements.txt` (PyTorch) or `requirements-jax.txt` (JAX)
 and rebuild. **Don't** re-add the framework itself — a bare `torch` pulls a
 CUDA/CPU wheel, and adding `jax`/`jaxlib`/`jax-rocm7-*` risks clobbering the
 ROCm-matched build already in the base image.
+
+## Development
+
+`scripts/check.sh` runs the hardware-free checks — shell/Python syntax, a valid
+`docker compose config`, and a guard that the default image tags in the README
+still match the authoritative `ARG` defaults in the Dockerfiles. Run it before
+pushing:
+
+```bash
+./scripts/check.sh
+```
+
+CI (`.github/workflows/checks.yml`) runs the same script on every push and PR.
+The GPU smoke tests aren't in CI — they need a real gfx1151 machine — so run
+`./run.sh {pytorch|jax} check` locally after changing anything that touches the
+runtime.
 
 ## License
 
