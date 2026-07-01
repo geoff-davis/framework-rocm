@@ -4,7 +4,7 @@
 # their supporting libraries are already pinned to a known-good combination.
 # Bump ROCM_PYTORCH_TAG to move to a newer ROCm/PyTorch; see README for how to
 # find a tag that supports gfx1151.
-ARG ROCM_PYTORCH_TAG=rocm6.4.1_ubuntu24.04_py3.12_pytorch_release_2.6.0
+ARG ROCM_PYTORCH_TAG=rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0
 FROM rocm/pytorch:${ROCM_PYTORCH_TAG}
 
 # gfx1151 (Strix Halo) is supported by recent ROCm, but some kernels/libraries

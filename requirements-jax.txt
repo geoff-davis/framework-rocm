@@ -1,0 +1,9 @@
+# Extra Python packages baked into the JAX image on top of the ROCm JAX base.
+# Keep this minimal — the base already ships jax/jaxlib built against ROCm.
+# Do NOT add `jax`, `jaxlib`, or `jax-rocm7-*` here; that risks clobbering the
+# ROCm-matched build in the base image.
+
+# Examples (uncomment as needed):
+# flax
+# optax
+# numpy
