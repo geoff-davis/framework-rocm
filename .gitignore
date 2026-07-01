@@ -1,0 +1,13 @@
+# Local work — don't commit whatever you mount into the container.
+/workspace/*
+!/workspace/.gitkeep
+
+# Python noise
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Editor / OS cruft
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,10 @@
+# Extra Python packages baked into the image on top of the ROCm PyTorch base.
+# Keep this list minimal — the base image already ships torch/torchvision built
+# against ROCm. Do NOT add a plain `torch` here; that would pull a CUDA/CPU
+# wheel and clobber the ROCm build.
+
+# Examples (uncomment as needed):
+# numpy
+# transformers
+# accelerate
+# jupyterlab

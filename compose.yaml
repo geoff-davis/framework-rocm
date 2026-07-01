@@ -1,0 +1,39 @@
+# docker compose config for the Framework Desktop ROCm + PyTorch container.
+#
+#   docker compose build          # build the image
+#   docker compose run --rm rocm  # drop into a shell with the GPU attached
+#   docker compose run --rm rocm python /usr/local/bin/check_gpu.py
+#
+# The device / group / security settings below are what actually make the GPU
+# visible inside the container — they matter as much as the image itself.
+services:
+  rocm:
+    build:
+      context: .
+      args:
+        # Override at build time: docker compose build --build-arg ROCM_PYTORCH_TAG=...
+        ROCM_PYTORCH_TAG: rocm6.4.1_ubuntu24.04_py3.12_pytorch_release_2.6.0
+    image: framework-rocm:local
+    # ROCm needs the kernel fusion driver and the DRI render nodes.
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    # These host groups own /dev/kfd and /dev/dri/render*. IDs vary per distro;
+    # `getent group render video` on the host shows the numeric GIDs if names
+    # don't resolve inside the container.
+    group_add:
+      - video
+      - render
+    # ROCm's userspace trips the default seccomp profile.
+    security_opt:
+      - seccomp=unconfined
+    ipc: host
+    # Bind-mount your work into the container. Adjust the host path as needed.
+    volumes:
+      - ./workspace:/workspace
+    stdin_open: true
+    tty: true
+    # Uncomment if you enabled the gfx override in the Dockerfile and want it at
+    # runtime instead:
+    # environment:
+    #   - HSA_OVERRIDE_GFX_VERSION=11.0.0
