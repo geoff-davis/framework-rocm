@@ -49,6 +49,7 @@ the compose path needs it; `run.sh` does not):
 
 ```bash
 cp .env.example .env      # then edit, or just generate it:
+mkdir -p ~/.cache/framework-rocm && \
 printf 'RENDER_GID=%s\nVIDEO_GID=%s\nHOST_UID=%s\nHOST_GID=%s\n' \
   "$(getent group render | cut -d: -f3)" "$(getent group video | cut -d: -f3)" \
   "$(id -u)" "$(id -g)" > .env
@@ -95,15 +96,34 @@ device kind   : Radeon 8060S Graphics
 matmul OK     : sum=1073741824.0 on rocm:0
 ```
 
-Both tests verify the device *arch/kind* matches gfx1151 / the Radeon 8060S, so
-a silent fallback to the wrong GPU shows up instead of passing quietly. On a
+Both tests verify the device matches expectations, so a silent fallback to the
+wrong GPU shows up instead of passing quietly: PyTorch checks the arch string
+(`gfx1151`), and JAX — which doesn't expose the arch — checks the device kind
+against `Radeon 80` (matching any Strix Halo variant: 8060S, 8050S). On a
 different card, set `EXPECTED_ARCH=` / `EXPECTED_DEVICE=` to silence the warning,
 or `STRICT_ARCH=1` / `STRICT_DEVICE=1` to make a mismatch a hard failure.
 
-Containers run as your host user by default (so files written to `workspace/`
-aren't root-owned). If you need to `pip install` into system site-packages
-inside the container, run as root: `ROCM_ROOT=1 ./run.sh pytorch shell`, or set
-`HOST_UID=0`/`HOST_GID=0` in `.env` for the compose path.
+### Runtime behaviour (both paths)
+
+- **Runs as your host user** so files written to the mounted workspace aren't
+  root-owned. Need root (e.g. `pip install` into system site-packages)?
+  `ROCM_ROOT=1 ./run.sh pytorch shell`, or `HOST_UID=0`/`HOST_GID=0` in `.env`.
+- **`HOME` is `/workspace`** inside the container (the mapped user has no
+  passwd entry, so it would otherwise be homeless and `$HOME`-writing tools
+  would break).
+- **Caches persist across runs**: a host dir (default `~/.cache/framework-rocm`,
+  override with `ROCM_CACHE_DIR`) is mounted at `$HOME/.cache`, so Hugging Face
+  models, pip downloads, and MIOpen's compiled-kernel cache survive container
+  exit. MIOpen especially matters on gfx1151 — first-run kernel compilation is
+  slow, and without this it repeats every session. `run.sh` creates the dir;
+  for compose, `mkdir -p` it yourself first so Docker doesn't create it
+  root-owned.
+- **Work on a real project**: mount it at `/workspace` with
+  `WORKSPACE_DIR=~/projects/my-model ./run.sh pytorch shell` (or set it in
+  `.env` for compose) instead of copying files into `workspace/`.
+- **Ports** (Jupyter, TensorBoard, …): `ROCM_PORTS="8888:8888" ./run.sh pytorch
+  shell` for the wrapper; for compose, uncomment `ports:` in `compose.yaml` and
+  use `docker compose run --service-ports <service>`.
 
 ## What makes the GPU visible
 
@@ -162,9 +182,12 @@ desktop) by setting:
 HSA_OVERRIDE_GFX_VERSION=11.0.0
 ```
 
-There's a commented line for it in both the `Dockerfile` and `compose.yaml`.
-**Try without it first** — the override can mask real problems and cost
-performance. Only enable it if the native path genuinely fails.
+No file edits needed to try it: `run.sh` forwards the variable
+(`HSA_OVERRIDE_GFX_VERSION=11.0.0 ./run.sh pytorch check`), and `compose.yaml`
+has a commented `environment:` line for it; to bake it into an image there are
+commented `ENV` lines in both Dockerfiles. **Try without it first** — the
+override can mask real problems and cost performance. Only enable it if the
+native path genuinely fails.
 
 **If the image's bundled framework doesn't see gfx1151 at all**, reinstall from
 AMD's gfx1151-aware wheel index — the stock PyPI / pytorch.org wheels don't

@@ -16,6 +16,14 @@
 #   ROCM_PYTORCH_TAG / ROCM_JAX_TAG  build a non-default base image tag
 #                                    (default lives in the Dockerfile ARG)
 #   ROCM_ROOT=1                      run as root instead of your host user
+#   WORKSPACE_DIR=<path>             mount a different host dir at /workspace
+#                                    (default: ./workspace)
+#   ROCM_CACHE_DIR=<path>            host dir persisted at $HOME/.cache inside
+#                                    the container, so HF models / pip / MIOpen
+#                                    kernel caches survive container exit
+#                                    (default: ~/.cache/framework-rocm)
+#   ROCM_PORTS="8888:8888 ..."       space-separated -p port mappings
+#   HSA_OVERRIDE_GFX_VERSION=11.0.0  gfx fallback (see README), forwarded in
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -68,15 +76,32 @@ docker_run() {
   if [ -z "${ROCM_ROOT:-}" ]; then
     user_flags=(--user "$(id -u):$(id -g)")
   fi
-  docker run --rm "${tty_flags[@]}" "${user_flags[@]}" \
+  # Optional port mappings, e.g. ROCM_PORTS="8888:8888 6006:6006" for Jupyter
+  # or TensorBoard running inside the container.
+  local port_flags=()
+  local p
+  for p in ${ROCM_PORTS:-}; do
+    port_flags+=(-p "$p")
+  done
+  # Persist caches across runs: HOME is set to /workspace (the mapped user has
+  # no passwd entry, so it would otherwise be homeless), and a host dir is
+  # mounted at /workspace/.cache — HF models, pip downloads, and MIOpen's
+  # compiled-kernel cache all land under $HOME/.cache and survive --rm.
+  # Pre-create it so Docker doesn't create it root-owned.
+  local cache_dir="${ROCM_CACHE_DIR:-${HOME}/.cache/framework-rocm}"
+  mkdir -p "${cache_dir}"
+  docker run --rm "${tty_flags[@]}" "${user_flags[@]}" "${port_flags[@]}" \
     --device=/dev/kfd \
     --device=/dev/dri \
     --group-add "${VIDEO_GID}" \
     --group-add "${RENDER_GID}" \
     --security-opt seccomp=unconfined \
     --ipc=host \
+    -e HOME=/workspace \
+    -e HSA_OVERRIDE_GFX_VERSION \
     -e EXPECTED_ARCH -e STRICT_ARCH -e EXPECTED_DEVICE -e STRICT_DEVICE \
-    -v "${HERE}/workspace:/workspace" \
+    -v "${WORKSPACE_DIR:-${HERE}/workspace}:/workspace" \
+    -v "${cache_dir}:/workspace/.cache" \
     "${IMAGE}" "$@"
 }
 

@@ -7,8 +7,9 @@ enumerated. Exits non-zero if no GPU-backed device is usable.
 
 JAX doesn't expose the gfx arch, so to catch a silent fallback to the wrong GPU
 it checks the device's reported kind against EXPECTED_DEVICE (default
-"Radeon 8060S"). A mismatch prints a warning; set STRICT_DEVICE=1 to make it a
-hard failure, or EXPECTED_DEVICE= to skip.
+"Radeon 80", matching any Strix Halo variant — 8060S, 8050S). A mismatch prints
+a warning; set STRICT_DEVICE=1 to make it a hard failure, or EXPECTED_DEVICE=
+to skip.
 """
 import os
 import sys
@@ -47,7 +48,7 @@ def main() -> int:
     dev = gpu_devices[0]
     kind = getattr(dev, "device_kind", "") or ""
     print(f"device kind   : {kind}")
-    expected = os.environ.get("EXPECTED_DEVICE", "Radeon 8060S")
+    expected = os.environ.get("EXPECTED_DEVICE", "Radeon 80")
     if expected and expected not in kind:
         print(f"WARNING: expected device '{expected}' not in '{kind}' — wrong GPU "
               "or a fallback may be active (set EXPECTED_DEVICE= to silence).",

@@ -32,8 +32,22 @@ x-rocm-gpu: &rocm-gpu
   security_opt:
     - seccomp=unconfined
   ipc: host
+  environment:
+    # The mapped user has no passwd entry in the container, so give it a real
+    # HOME; caches ($HOME/.cache) then land in the persistent mount below.
+    HOME: /workspace
+    # gfx1151 fallback — leave unset unless the native path fails (see README):
+    # HSA_OVERRIDE_GFX_VERSION: "11.0.0"
   volumes:
-    - ./workspace:/workspace
+    # Override the workspace via WORKSPACE_DIR in .env. The cache mount keeps
+    # HF models / pip downloads / MIOpen kernel caches across runs; create the
+    # host dir yourself first (mkdir -p) so Docker doesn't make it root-owned.
+    - ${WORKSPACE_DIR:-./workspace}:/workspace
+    - ${ROCM_CACHE_DIR:-${HOME}/.cache/framework-rocm}:/workspace/.cache
+  # For Jupyter/TensorBoard etc., uncomment and run with:
+  #   docker compose run --service-ports <service>
+  # ports:
+  #   - "8888:8888"
   stdin_open: true
   tty: true
 
