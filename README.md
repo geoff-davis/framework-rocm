@@ -176,6 +176,12 @@ already bundle a matched set.
 
 ## The gfx1151 gotcha
 
+**Training slow?** There is currently no flash/mem-efficient attention kernel
+for gfx1151 — SDPA silently falls back to the slow math backend, and **bf16 (+
+gradient checkpointing) is the lever**, not the torch/ROCm version. The smoke
+test now times attention so this is visible. Measurements and recommendations:
+[docs/gfx1151-attention-findings.md](docs/gfx1151-attention-findings.md).
+
 Recent ROCm supports gfx1151 natively, but some libraries/kernels are only
 fully tuned for nearby archs and can throw `invalid device function` or
 missing-kernel errors. If that happens, present the GPU as `gfx1100` (RDNA3

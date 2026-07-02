@@ -27,8 +27,11 @@ x-rocm-gpu: &rocm-gpu
   group_add:
     - "${VIDEO_GID:?set VIDEO_GID in .env — copy .env.example}"
     - "${RENDER_GID:?set RENDER_GID in .env — copy .env.example}"
-  # Map to the host user so mounted files aren't root-owned; 0:0 = root.
-  user: "${HOST_UID:-0}:${HOST_GID:-0}"
+  # Map to the host user so mounted files aren't root-owned. Required (no
+  # root fallback): a silent root default once polluted the shared HF cache
+  # with root-owned model dirs (docs/gfx1151-attention-findings.md §5).
+  # Set both to 0 in .env if you genuinely want root.
+  user: "${HOST_UID:?set HOST_UID in .env — copy .env.example}:${HOST_GID:?set HOST_GID in .env — copy .env.example}"
   security_opt:
     - seccomp=unconfined
   ipc: host

@@ -37,6 +37,11 @@ Takeaways:
 - **fp32 is a trap on gfx1151** — the math-attention path is especially
   bandwidth-bound in fp32. bf16 roughly quarters it (halves matmul + halves the
   bandwidth), landing everything in the ~8–10 s/step band.
+- Nuance: the *isolated* SDPA micro-benchmark in `check_gpu.py` shows fp32 ≈
+  bf16 (~125 ms/iter either way at B32·H12·S512·D64) — the math backend
+  upcasts internally, so SDPA itself barely benefits. The end-to-end bf16 win
+  comes from everything around it (linear layers, reduced bandwidth). Don't
+  read smoke-test parity as contradicting the training numbers above.
 - The `rocm7.2.4` image's fp32 is anomalously slow (70 s vs 28 s), but **bf16
   converges the stacks** to ~8–10 s/step, so the version choice is a wash for
   speed once you're in bf16. Pick the version for hygiene (see README), not
