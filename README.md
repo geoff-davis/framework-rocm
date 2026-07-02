@@ -238,6 +238,42 @@ and rebuild. **Don't** re-add the framework itself — a bare `torch` pulls a
 CUDA/CPU wheel, and adding `jax`/`jaxlib`/`jax-rocm7-*` risks clobbering the
 ROCm-matched build already in the base image.
 
+## Using this from other projects
+
+The bases are huge (17–23 GB), but Docker stores layers once and shares them —
+you pay for a base a single time per machine, and everything built on top costs
+only its delta. Treat `framework-rocm:pytorch` / `framework-rocm:jax` as the
+machine-wide GPU runtime and use one of two patterns:
+
+**Mount your project in — no image build at all.** Usually all you need:
+
+```bash
+WORKSPACE_DIR=~/projects/my-model ./run.sh pytorch shell
+pip install --user -r requirements.txt   # inside the container
+```
+
+Because `HOME=/workspace`, `pip install --user` lands in your project's
+`.local/` on the host — each project keeps its own packages, persisting across
+container runs, no image build, no duplicated gigabytes. Model downloads still
+go to the shared cache. (Add `.local/` to the project's `.gitignore`.)
+
+**Derive a thin image — when deps should be baked in.** In the project:
+
+```dockerfile
+FROM framework-rocm:pytorch
+RUN pip install --no-cache-dir -r requirements.txt
+```
+
+The derived image *reports* the full ~23 GB, but that's cumulative virtual
+size — its unique disk cost is just the installed packages (megabytes).
+`docker system df -v` shows the real shared/unique split.
+
+What actually duplicates storage: different **base tags** (a `rocm6.4.4_*`
+project and a `rocm7.2.4_*` project share nothing — stay on one tag family),
+the **PyTorch and JAX bases** themselves (built separately by AMD, ~40 GB
+combined, paid once), and **old bases after a version bump** until you
+`docker image prune`.
+
 ## Development
 
 `scripts/check.sh` runs the hardware-free checks — shell/Python syntax, a valid
