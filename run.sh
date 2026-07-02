@@ -19,9 +19,12 @@
 #   WORKSPACE_DIR=<path>             mount a different host dir at /workspace
 #                                    (default: ./workspace)
 #   ROCM_CACHE_DIR=<path>            host dir persisted at $HOME/.cache inside
-#                                    the container, so HF models / pip / MIOpen
-#                                    kernel caches survive container exit
+#                                    the container, so pip / MIOpen kernel
+#                                    caches survive container exit
 #                                    (default: ~/.cache/framework-rocm)
+#   ROCM_HF_CACHE=<path>             host Hugging Face cache mounted at
+#                                    $HOME/.cache/huggingface, shared with
+#                                    native tools (default: ~/.cache/huggingface)
 #   ROCM_PORTS="8888:8888 ..."       space-separated -p port mappings
 #   HSA_OVERRIDE_GFX_VERSION=11.0.0  gfx fallback (see README), forwarded in
 set -euo pipefail
@@ -85,11 +88,14 @@ docker_run() {
   done
   # Persist caches across runs: HOME is set to /workspace (the mapped user has
   # no passwd entry, so it would otherwise be homeless), and a host dir is
-  # mounted at /workspace/.cache — HF models, pip downloads, and MIOpen's
-  # compiled-kernel cache all land under $HOME/.cache and survive --rm.
-  # Pre-create it so Docker doesn't create it root-owned.
+  # mounted at /workspace/.cache — pip downloads and MIOpen's compiled-kernel
+  # cache land under $HOME/.cache and survive --rm. Hugging Face models get the
+  # host's *standard* HF cache mounted on top, so models are downloaded once
+  # per machine and shared with native tools and other projects.
+  # Pre-create both so Docker doesn't create them root-owned.
   local cache_dir="${ROCM_CACHE_DIR:-${HOME}/.cache/framework-rocm}"
-  mkdir -p "${cache_dir}"
+  local hf_cache="${ROCM_HF_CACHE:-${HOME}/.cache/huggingface}"
+  mkdir -p "${cache_dir}" "${hf_cache}"
   docker run --rm "${tty_flags[@]}" "${user_flags[@]}" "${port_flags[@]}" \
     --device=/dev/kfd \
     --device=/dev/dri \
@@ -102,6 +108,7 @@ docker_run() {
     -e EXPECTED_ARCH -e STRICT_ARCH -e EXPECTED_DEVICE -e STRICT_DEVICE \
     -v "${WORKSPACE_DIR:-${HERE}/workspace}:/workspace" \
     -v "${cache_dir}:/workspace/.cache" \
+    -v "${hf_cache}:/workspace/.cache/huggingface" \
     "${IMAGE}" "$@"
 }
 

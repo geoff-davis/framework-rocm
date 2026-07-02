@@ -112,12 +112,15 @@ or `STRICT_ARCH=1` / `STRICT_DEVICE=1` to make a mismatch a hard failure.
   passwd entry, so it would otherwise be homeless and `$HOME`-writing tools
   would break).
 - **Caches persist across runs**: a host dir (default `~/.cache/framework-rocm`,
-  override with `ROCM_CACHE_DIR`) is mounted at `$HOME/.cache`, so Hugging Face
-  models, pip downloads, and MIOpen's compiled-kernel cache survive container
-  exit. MIOpen especially matters on gfx1151 — first-run kernel compilation is
-  slow, and without this it repeats every session. `run.sh` creates the dir;
-  for compose, `mkdir -p` it yourself first so Docker doesn't create it
-  root-owned.
+  override with `ROCM_CACHE_DIR`) is mounted at `$HOME/.cache`, so pip
+  downloads and MIOpen's compiled-kernel cache survive container exit. MIOpen
+  especially matters on gfx1151 — first-run kernel compilation is slow, and
+  without this it repeats every session. `run.sh` creates the dir; for compose,
+  `mkdir -p` it yourself first so Docker doesn't create it root-owned.
+- **Hugging Face models use the host's standard cache**: `~/.cache/huggingface`
+  (override with `ROCM_HF_CACHE`) is mounted on top at
+  `$HOME/.cache/huggingface`, so models download once per machine and are
+  shared with native tools and every other project's containers.
 - **Work on a real project**: mount it at `/workspace` with
   `WORKSPACE_DIR=~/projects/my-model ./run.sh pytorch shell` (or set it in
   `.env` for compose) instead of copying files into `workspace/`.
@@ -273,6 +276,15 @@ project and a `rocm7.2.4_*` project share nothing — stay on one tag family),
 the **PyTorch and JAX bases** themselves (built separately by AMD, ~40 GB
 combined, paid once), and **old bases after a version bump** until you
 `docker image prune`.
+
+**uv-managed projects: take torch from the base, not from the lockfile.** A
+`uv.lock` pins CPU (or CUDA) torch, and forcing ROCm torch through uv's
+source overrides fights the base image's bundled ROCm userspace (learned the
+hard way — `libhsa-runtime` mismatches). Inside the container, skip
+`uv sync`; install only the non-torch deps with pip and let the base image's
+torch/jax stand. For work repos that must stay self-contained, pin the same
+upstream `rocm/pytorch` tag in their own Dockerfile — layer sharing comes from
+the common base tag, not from deriving from this repo's images.
 
 ## Development
 

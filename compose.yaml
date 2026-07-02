@@ -44,6 +44,9 @@ x-rocm-gpu: &rocm-gpu
     # host dir yourself first (mkdir -p) so Docker doesn't make it root-owned.
     - ${WORKSPACE_DIR:-./workspace}:/workspace
     - ${ROCM_CACHE_DIR:-${HOME}/.cache/framework-rocm}:/workspace/.cache
+    # The host's standard HF cache, so models download once per machine and are
+    # shared with native tools and other projects.
+    - ${ROCM_HF_CACHE:-${HOME}/.cache/huggingface}:/workspace/.cache/huggingface
   # For Jupyter/TensorBoard etc., uncomment and run with:
   #   docker compose run --service-ports <service>
   # ports:
