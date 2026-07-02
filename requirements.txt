@@ -2,9 +2,23 @@
 # Keep this list minimal — the base image already ships torch/torchvision built
 # against ROCm. Do NOT add a plain `torch` here; that would pull a CUDA/CPU
 # wheel and clobber the ROCm build.
+#
+# The pins below are the versions verified working on this box's current base
+# (rocm7.2.4 / torch 2.10, gfx1151) during a bge-base fine-tune + encode
+# (2026-07-02). Uncomment what you need. For attention-heavy training use bf16 +
+# gradient checkpointing — see docs/gfx1151-attention-findings.md.
 
-# Examples (uncomment as needed):
-# numpy
-# transformers
-# accelerate
+# --- Core numerics / data ---
+# numpy==2.4.6
+# polars==1.41.2
+
+# --- HuggingFace training stack (tested-good with torch 2.10 on gfx1151) ---
+# transformers==5.11.0
+# accelerate==1.14.0
+# datasets==5.0.0
+# tokenizers==0.22.2
+# safetensors==0.8.0
+# sentence-transformers==5.5.1
+
+# --- Notebooks (optional) ---
 # jupyterlab
