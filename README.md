@@ -53,16 +53,45 @@ BERT-base shape, and a real 110M-param sentence-encoder fine-tune from
   sudo usermod -aG render,video "$USER"   # then log out/in
   ```
 
+**Preflight** — each of these should succeed *before* you build anything (they
+catch most first-run failures without waiting on a multi-GB pull):
+
+```bash
+docker version && docker compose version      # docker + compose installed?
+docker run --rm hello-world                   # can run containers (no sudo)?
+ls -l /dev/kfd /dev/dri/renderD*              # GPU device nodes exist?
+groups | grep -oE 'render|video'              # you're in both groups?
+getent group render video                     # the numeric GIDs compose needs
+```
+
 ## Quick start
 
 Pick a framework — `pytorch` or `jax`.
 
-**With Compose**, first create a `.env` (host-specific GIDs + your UID/GID —
-the compose path needs it; `run.sh` does not):
+> **Before the first build:** the AMD base images are **17–23 GB**. The first
+> build/pull downloads that once — expect tens of minutes on a typical
+> connection — and Docker then stores the layers a single time and shares them
+> machine-wide (`docker system df` shows usage). Make sure the disk has room.
+
+The easiest path is the `run.sh` wrapper — no `.env` to edit, no Compose
+knowledge needed; it resolves the device GIDs and maps your host user
+automatically (first arg is the framework):
+
+```bash
+./run.sh pytorch build
+./run.sh pytorch check          # smoke test
+./run.sh jax     check          # smoke test
+./run.sh pytorch shell          # interactive shell
+./run.sh jax     python your_script.py
+```
+
+**Already a Compose user?** The same containers are defined in `compose.yaml`.
+This path needs a `.env` with host-specific GIDs + your UID/GID (`run.sh` does
+not):
 
 ```bash
 cp .env.example .env      # then edit, or just generate it:
-mkdir -p ~/.cache/framework-rocm && \
+mkdir -p ~/.cache/framework-rocm ~/.cache/huggingface && \
 printf 'RENDER_GID=%s\nVIDEO_GID=%s\nHOST_UID=%s\nHOST_GID=%s\n' \
   "$(getent group render | cut -d: -f3)" "$(getent group video | cut -d: -f3)" \
   "$(id -u)" "$(id -g)" > .env
@@ -77,16 +106,23 @@ docker compose run --rm jax     python /usr/local/bin/check_jax.py  # smoke test
 docker compose run --rm pytorch                                     # interactive shell
 ```
 
-Or with the plain-`docker` wrapper (first arg is the framework; no `.env`
-needed — it resolves the GIDs and maps your user automatically):
+<details>
+<summary><strong>New to Docker? 60-second glossary</strong></summary>
 
-```bash
-./run.sh pytorch build
-./run.sh pytorch check          # smoke test
-./run.sh jax     check          # smoke test
-./run.sh pytorch shell          # interactive shell
-./run.sh jax     python your_script.py
-```
+- **Image** — the frozen filesystem snapshot you build once (`framework-rocm:pytorch`).
+- **Container** — a running (disposable) instance of an image.
+- **`--rm`** — deletes the *container* when it exits. The *image* stays; so do
+  files written into bind-mounted paths.
+- **Bind mount** (`-v host:container`) — a host directory appearing inside the
+  container. Writes there land on the host and persist; writes anywhere else
+  vanish with the container.
+- **Build / tag** — `docker build` produces an image; the tag
+  (`name:variant`) is just its label. Rebuilding with the same tag replaces it.
+- **Compose** — a YAML wrapper (`compose.yaml`) that stores the run flags so
+  you don't retype them; `docker compose run pytorch` ≈ the long `docker run`
+  in `run.sh`.
+
+</details>
 
 A successful PyTorch smoke test looks roughly like:
 
@@ -141,6 +177,18 @@ or `STRICT_ARCH=1` / `STRICT_DEVICE=1` to make a mismatch a hard failure.
   shell` for the wrapper; for compose, uncomment `ports:` in `compose.yaml` and
   use `docker compose run --service-ports <service>`.
 
+### Where are my files?
+
+Concretely, with the defaults (`HOME=/workspace` inside the container):
+
+| You write… | …it lands on the host at | Survives exit? |
+| --- | --- | --- |
+| `/workspace/foo.py` | `./workspace/foo.py` (or `$WORKSPACE_DIR`) | yes |
+| `pip install --user …` | `./workspace/.local/` | yes |
+| model downloads (`$HOME/.cache/huggingface`) | `~/.cache/huggingface` | yes |
+| other `$HOME/.cache` (pip, MIOpen, Triton) | `~/.cache/framework-rocm` | yes |
+| anything else — `apt install`, `/tmp`, system site-packages | nowhere | **no** — gone when the `--rm` container exits; bake it into the image instead |
+
 ## What makes the GPU visible
 
 These aren't optional decorations — they're why compute works inside the
@@ -161,6 +209,19 @@ natively:
 If names don't resolve to the right GIDs inside the container, find them on the
 host with `getent group render video` and use the numeric IDs.
 
+## Troubleshooting
+
+| Symptom | Likely cause → fix |
+| --- | --- |
+| `permission denied … /var/run/docker.sock` | Your user isn't in the `docker` group → `sudo usermod -aG docker "$USER"`, re-login. |
+| `ls: cannot access '/dev/kfd'` | `amdgpu` not loaded / kernel too old → `lsmod \| grep amdgpu`, check `dmesg`, update kernel/firmware. |
+| Compose: `set VIDEO_GID in .env` | No `.env` → generate it (one-liner in Quick start / `.env.example`). |
+| `torch.cuda.is_available()` is `False` in the container | Ran without the device/group flags → use `run.sh` or Compose, not bare `docker run`; verify GIDs with `getent group render video`. |
+| Files under `~/.cache/huggingface` owned by root | A root-run container wrote them → `sudo chown -R "$USER" ~/.cache/huggingface`; keep `HOST_UID`/`HOST_GID` set (compose refuses to default to root). |
+| Jupyter/TensorBoard unreachable | Port not published → `ROCM_PORTS="8888:8888" ./run.sh …` or `docker compose run --service-ports …`. |
+| Disk full after pulls | See usage with `docker system df`; reclaim with `docker image prune` (dangling only) — `docker system prune -a` also deletes the 17–23 GB bases you'd re-download. |
+| Attention/training unexpectedly slow | See "The gfx1151 gotcha" above (bf16 + AOTriton). |
+
 ## Picking versions
 
 Each image's base tag is a build arg. Browse tags, build against one, re-run the
@@ -177,7 +238,8 @@ docker compose build --build-arg ROCM_PYTORCH_TAG=<tag> pytorch
 
 - Default is newest / best real-world Strix Halo behaviour.
 - Older PyTorch on the same ROCm: swap `_2.10.0` for `_2.9.1` / `_2.8.0` / `_2.7.1`.
-- Officially-supported stack: a `rocm6.4.4_*` tag, matching AMD's matrix.
+- AMD-validated combo (per the Ryzen matrix — see the support note up top):
+  `rocm7.2.1_ubuntu24.04_py3.12_pytorch_release_2.9.1`.
 
 **JAX** — `ROCM_JAX_TAG`, default `rocm7.2.4-jax0.8.2-py3.12`
 ([tags](https://hub.docker.com/r/rocm/jax/tags)):
