@@ -16,6 +16,14 @@ They're kept separate on purpose: each framework bundles its own ROCm userspace
 libs, so separate images avoid version friction and keep pulls smaller. Both
 share the same device passthrough, gfx1151 specifics, and smoke-test pattern.
 
+**Measured on this hardware** (see
+[docs/gfx1151-attention-findings.md](docs/gfx1151-attention-findings.md) for
+the full story): enabling AOTriton mem-efficient SDPA — which these containers
+now do by default — takes bf16 attention from 92 → 8.4 ms/iter (~11x) at
+BERT-base shape, and a real 110M-param sentence-encoder fine-tune from
+9.8 → 1.10 s/step (~9x) once combined with the other levers documented there
+(no gradient checkpointing, TunableOp, seq-length cap).
+
 > **gfx1151 support, honestly:** AMD's official
 > [compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html)
 > only lists the Ryzen AI Max+ 395 / Radeon 8060S (gfx1151) as *officially*
@@ -25,8 +33,9 @@ share the same device passthrough, gfx1151 specifics, and smoke-test pattern.
 > defaults to 7.2.4 for that reason. If you want to stay strictly on the
 > officially-supported stack, pin a 6.4.4 tag instead (see below).
 >
-> Both images here were **verified on an actual Framework Desktop**: the ROCm
-> 7.2.4 `rocm/pytorch` and `rocm/jax` bases both see gfx1151 (Radeon 8060S) and
+> Both images here were **verified on an actual Framework Desktop**
+> (last verified **2026-07-05**, ROCm 7.2.4 / torch 2.10.0 / jax 0.8.2): the
+> `rocm/pytorch` and `rocm/jax` bases both see gfx1151 (Radeon 8060S) and
 > run GPU compute *natively* — no `HSA_OVERRIDE_GFX_VERSION` and no gfx1151
 > fallback wheels required.
 

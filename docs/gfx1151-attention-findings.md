@@ -87,7 +87,7 @@ bigger batches or models, raise the UMA carveout in BIOS or keep grad-ckpt on.
 up` **without** `HOST_UID`/`HOST_GID` exported runs as **root** and writes
 root-owned files into the **shared** `~/.cache/huggingface` (observed:
 root-owned `models--BAAI--bge-large-en-v1.5`). That can later block non-root
-runs (of this project or others sharing the HF cache, e.g. other projects) from
+runs (of this project or others sharing the HF cache) from
 updating those models. `run.sh` is fine (it uses `--user $(id -u):$(id -g)`).
 Suggested fix: default the compose UID/GID to the host user, or document that
 `HOST_UID`/`HOST_GID` must be exported. Clear stale root files with
@@ -111,7 +111,7 @@ The smoke test now pins each backend explicitly (`bf16 math-only` vs
 `bf16 mem-effic.`), so kernel availability and the gap are printed directly
 instead of inferred from warnings.
 
-### End-to-end (110M BERT fine-tune, MNRL, batch 64, bf16)
+### End-to-end (110M BERT sentence-encoder fine-tune, MNRL, batch 64, bf16)
 
 - math backend, seq≤512, grad-ckpt ON (the §4 recipe): **9.8 s/step**
 - drop grad-ckpt with math backend: **HIP OOM at ~61 GiB** — the real culprit
@@ -146,3 +146,28 @@ some other stack, report the exact base tag before concluding anything.
    wrappers now set it into the persistent cache mount) but measured below
    TunableOp on this workload (~7% over AOTriton alone) — benchmark before
    adopting.
+
+## 7. JAX (2026-07-05): Pallas flash attention works on gfx1151 — smaller win, not automatic
+
+Same shape as §6 (B32·H12·S512·D64, bf16, fwd+bwd, jax 0.8.2 /
+`rocm/jax:rocm7.2.4`):
+
+| path | ms/iter |
+| --- | ---: |
+| `jax.nn.dot_product_attention` (XLA math; `implementation='cudnn'` is rejected on this GPU) | 30.7 |
+| Pallas flash attention (`jax.experimental.pallas.ops.gpu.attention.mha`, Triton-backed) | **16.6** |
+
+Context against §6's torch numbers: XLA's "math" baseline (30.7 ms) is already
+~3x faster than torch's math backend (92.3 ms) — XLA fuses the softmax·matmul
+chain — so the Triton lever buys JAX only ~1.9x where torch gained ~11x. The
+AMD-tuned AOTriton kernels also still beat generic Pallas codegen ~2x
+(8.4 vs 16.6 ms).
+
+Practical differences from the torch flag:
+
+- **Not automatic.** There is no env var; `jax.nn.dot_product_attention` will
+  not use it. You must call the Pallas `mha` op (or use a library that wires
+  it up) explicitly.
+- These are timing probes — validate numerics against the XLA path before
+  adopting (`jnp.allclose` on fwd + grads), and expect block-size tuning to
+  matter at other shapes.
