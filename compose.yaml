@@ -39,6 +39,16 @@ x-rocm-gpu: &rocm-gpu
     # The mapped user has no passwd entry in the container, so give it a real
     # HOME; caches ($HOME/.cache) then land in the persistent mount below.
     HOME: /workspace
+    # AOTriton mem-efficient SDPA — default ON. Without it gfx1151 attention
+    # falls back to the math backend: bf16 SDPA ~11x slower, and the S×S
+    # materialization OOMs training jobs. Verified faster on torch 2.10 /
+    # ROCm 7.2.4 (docs/gfx1151-attention-findings.md §6). Set =0 in .env to
+    # disable.
+    TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "${TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL:-1}"
+    # Keep torch.compile kernel caches in the persistent cache mount instead
+    # of the workspace root.
+    TRITON_CACHE_DIR: /workspace/.cache/triton
+    TORCHINDUCTOR_CACHE_DIR: /workspace/.cache/inductor
     # gfx1151 fallback — leave unset unless the native path fails (see README):
     # HSA_OVERRIDE_GFX_VERSION: "11.0.0"
   volumes:

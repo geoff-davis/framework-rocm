@@ -176,11 +176,24 @@ already bundle a matched set.
 
 ## The gfx1151 gotcha
 
-**Training slow?** There is currently no flash/mem-efficient attention kernel
-for gfx1151 — SDPA silently falls back to the slow math backend, and **bf16 (+
-gradient checkpointing) is the lever**, not the torch/ROCm version. The smoke
-test now times attention so this is visible. Measurements and recommendations:
+**Training slow?** Two levers, in order:
+
+1. **bf16** — fp32 attention on gfx1151 is a trap (memory-bandwidth-bound).
+2. **`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`** — unlocks AOTriton
+   mem-efficient SDPA (~11x faster bf16 attention than the math fallback, and
+   it stops materializing S×S attention, which is what OOMs training jobs).
+   `run.sh` and `compose.yaml` now set it by default; export `=0` to opt out.
+   Verified on torch 2.10 / ROCm 7.2.4 — an earlier finding that this flag was
+   *slower* predates that stack and is corrected in the findings doc.
+
+With both, gradient checkpointing is usually unnecessary (it was only ever
+compensating for math-backend memory). The smoke test times attention under
+each backend so a regression is visible. Measurements and history:
 [docs/gfx1151-attention-findings.md](docs/gfx1151-attention-findings.md).
+Bonus for GEMM-heavy jobs: PyTorch **TunableOp** (`PYTORCH_TUNABLEOP_ENABLED=1`)
+finds better GEMM kernels than the untuned gfx1151 defaults (~1.26x measured on
+a BERT fine-tune) — tune once per shape-set, then replay the CSV; details in
+the findings doc §6.
 
 Recent ROCm supports gfx1151 natively, but some libraries/kernels are only
 fully tuned for nearby archs and can throw `invalid device function` or

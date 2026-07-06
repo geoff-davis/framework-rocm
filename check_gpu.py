@@ -3,9 +3,10 @@
 
 Prints ROCm/PyTorch versions and the detected device(s), runs a tiny matmul to
 confirm compute works, then runs an **attention (SDPA) micro-benchmark** in
-fp32 vs bf16. The attention timing matters: on gfx1151 there is currently no
-flash/mem-efficient SDPA kernel, so attention silently falls back to a slow
-math backend — a regression a matmul-only check sails right past (see
+fp32 vs bf16. The attention timing matters: on gfx1151 mem-efficient SDPA is
+gated behind TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 (run.sh/compose set it
+by default); without it attention silently falls back to a slow math backend
+(bf16 ~11x slower) — a regression a matmul-only check sails right past (see
 docs/gfx1151-attention-findings.md). Exits non-zero if the GPU isn't usable.
 
 To guard against a silent fallback to the wrong GPU/arch, it also checks the
@@ -69,9 +70,11 @@ def main() -> int:
 def _bench_attention(torch, dev) -> None:
     """Time scaled_dot_product_attention (fwd+bwd) in fp32 vs bf16.
 
-    On gfx1151 there is no flash/mem-efficient SDPA kernel, so SDPA falls back
-    to the slow math backend — this surfaces that (and how much bf16 recovers),
-    which the matmul check above cannot see. Informational: never fails the smoke.
+    On gfx1151 the AOTriton mem-efficient SDPA kernel is gated behind
+    TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1; without it SDPA falls back to
+    the slow math backend — this surfaces which path is active (and how much
+    bf16 recovers), which the matmul check above cannot see. Informational:
+    never fails the smoke.
     """
     import torch.nn.functional as F
 
@@ -87,38 +90,70 @@ def _bench_attention(torch, dev) -> None:
         )
     except Exception:  # noqa: BLE001
         pass
+    aotriton = os.environ.get("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "")
+    print(f"  aotriton env  : TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL={aotriton or '<unset>'}")
 
-    def run(dtype, iters=10):
+    def run(dtype, iters=10, backend=None):
+        # backend: an SDPBackend to pin (raises if its kernel is unavailable
+        # for this arch/dtype); None = torch's normal dispatch.
+        from contextlib import nullcontext
+
+        try:
+            from torch.nn.attention import sdpa_kernel
+            ctx = sdpa_kernel([backend]) if backend is not None else nullcontext()
+        except ImportError:  # torch < 2.3
+            ctx = nullcontext()
         q = torch.randn(B, H, S, D, device=dev, dtype=dtype, requires_grad=True)
         k = torch.randn(B, H, S, D, device=dev, dtype=dtype, requires_grad=True)
         v = torch.randn(B, H, S, D, device=dev, dtype=dtype, requires_grad=True)
-        for _ in range(3):  # warmup / kernel compile
-            F.scaled_dot_product_attention(q, k, v).sum().backward()
-        torch.cuda.synchronize()
-        t0 = time.time()
-        for _ in range(iters):
-            q.grad = k.grad = v.grad = None
-            F.scaled_dot_product_attention(q, k, v).sum().backward()
-        torch.cuda.synchronize()
+        with ctx, warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for _ in range(3):  # warmup / kernel compile
+                F.scaled_dot_product_attention(q, k, v).sum().backward()
+            torch.cuda.synchronize()
+            t0 = time.time()
+            for _ in range(iters):
+                q.grad = k.grad = v.grad = None
+                F.scaled_dot_product_attention(q, k, v).sum().backward()
+            torch.cuda.synchronize()
         return (time.time() - t0) / iters * 1000.0
 
-    fell_back = False
+    # Default-dispatch timings (what a real workload gets).
     for label, dtype in (("fp32", torch.float32), ("bf16", torch.bfloat16)):
         try:
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                ms = run(dtype)
-            if any("attention" in str(w.message).lower() for w in caught):
-                fell_back = True
-            print(f"  {label} fwd+bwd : {ms:8.1f} ms/iter")
+            print(f"  {label} fwd+bwd : {run(dtype):8.1f} ms/iter  (default dispatch)")
         except Exception as e:  # noqa: BLE001
             print(f"  {label} fwd+bwd : FAILED ({type(e).__name__}: {e})")
-    if fell_back:
+
+    # Pin each backend explicitly so kernel availability (and the math-vs-
+    # mem-efficient gap) is visible directly instead of inferred from warnings.
+    # On gfx1151 mem-efficient needs TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1.
+    mem_efficient_ok = False
+    try:
+        from torch.nn.attention import SDPBackend
+
+        for label, backend in (
+            ("bf16 math-only", SDPBackend.MATH),
+            ("bf16 mem-effic.", SDPBackend.EFFICIENT_ATTENTION),
+        ):
+            try:
+                ms = run(torch.bfloat16, backend=backend)
+                print(f"  {label} : {ms:8.1f} ms/iter")
+                if backend is SDPBackend.EFFICIENT_ATTENTION:
+                    mem_efficient_ok = True
+            except Exception as e:  # noqa: BLE001
+                print(f"  {label} : unavailable ({type(e).__name__})")
+    except ImportError:
+        print("  (torch < 2.3: per-backend probe unavailable)")
+
+    if not mem_efficient_ok:
         print(
-            "  NOTE: torch reports mem-efficient/flash attention is unavailable for "
-            "this GPU -> slow math fallback. Use bf16 (+ gradient checkpointing) for "
-            "training; do NOT set TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 (it is "
-            "slower on gfx1151). See docs/gfx1151-attention-findings.md."
+            "  NOTE: mem-efficient SDPA is not running -> math fallback (bf16 "
+            "~11x slower here, and the SxS materialization OOMs training jobs). "
+            "Set TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 (run.sh/compose "
+            "default it on) — verified faster on gfx1151 with torch 2.10 / "
+            "ROCm 7.2.4; the 2026-07-02 'slower' finding was the older stack. "
+            "See docs/gfx1151-attention-findings.md."
         )
 
 

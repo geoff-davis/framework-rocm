@@ -27,6 +27,14 @@
 #                                    native tools (default: ~/.cache/huggingface)
 #   ROCM_PORTS="8888:8888 ..."       space-separated -p port mappings
 #   HSA_OVERRIDE_GFX_VERSION=11.0.0  gfx fallback (see README), forwarded in
+#   TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=0
+#                                    disable AOTriton mem-efficient SDPA.
+#                                    Default ON: without it gfx1151 attention
+#                                    falls back to the math backend (bf16 SDPA
+#                                    ~11x slower, and the S×S materialization
+#                                    OOMs training jobs). Verified faster on
+#                                    torch 2.10 / ROCm 7.2.4; see
+#                                    docs/gfx1151-attention-findings.md §6
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -105,6 +113,9 @@ docker_run() {
     --ipc=host \
     -e HOME=/workspace \
     -e HSA_OVERRIDE_GFX_VERSION \
+    -e "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=${TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL:-1}" \
+    -e TRITON_CACHE_DIR=/workspace/.cache/triton \
+    -e TORCHINDUCTOR_CACHE_DIR=/workspace/.cache/inductor \
     -e EXPECTED_ARCH -e STRICT_ARCH -e EXPECTED_DEVICE -e STRICT_DEVICE \
     -v "${WORKSPACE_DIR:-${HERE}/workspace}:/workspace" \
     -v "${cache_dir}:/workspace/.cache" \
