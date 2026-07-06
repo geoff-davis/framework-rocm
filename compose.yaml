@@ -19,7 +19,8 @@
 # `render`/`video` entry (passing the names fails with "unable to find group
 # render"), so numeric GIDs are required. Copy .env.example to .env and fill it
 # in — the one-liner in .env.example generates all four values. HOST_UID/GID
-# default to 0 (root) if unset. (The run.sh wrapper needs no .env.)
+# are required (no root fallback; see the user: key below). (The run.sh
+# wrapper needs no .env.)
 x-rocm-gpu: &rocm-gpu
   devices:
     - /dev/kfd

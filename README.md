@@ -6,8 +6,9 @@ It exists because getting a recent ROCm and a matching PyTorch or JAX talking to
 this GPU is fiddly, and re-deriving the right versions every time is a waste of
 an afternoon.
 
-Two sibling images, each built on the matching official AMD base so ROCm and the
-framework come pre-pinned to a combination AMD tested:
+Two sibling images, each built on the matching AMD-published base image, so
+ROCm and the framework arrive pre-pinned and mutually consistent (and verified
+on this hardware — see below):
 
 - **`pytorch`** — from [`rocm/pytorch`](https://hub.docker.com/r/rocm/pytorch)
 - **`jax`** — from [`rocm/jax`](https://hub.docker.com/r/rocm/jax)
@@ -24,14 +25,17 @@ BERT-base shape, and a real 110M-param sentence-encoder fine-tune from
 9.8 → 1.10 s/step (~9x) once combined with the other levers documented there
 (no gradient checkpointing, TunableOp, seq-length cap).
 
-> **gfx1151 support, honestly:** AMD's official
-> [compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html)
-> only lists the Ryzen AI Max+ 395 / Radeon 8060S (gfx1151) as *officially*
-> supported through **ROCm 6.4.4**. In practice, **ROCm 7.2.x works — and works
-> better** (updated HSA runtime, refreshed `amdgpu` module, broader kernel
-> coverage), and the community runs real PyTorch workloads on it. This repo
-> defaults to 7.2.4 for that reason. If you want to stay strictly on the
-> officially-supported stack, pin a 6.4.4 tag instead (see below).
+> **gfx1151 support, honestly:** AMD's
+> [Radeon/Ryzen Linux matrix](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityryz/native_linux/native_linux_compatibility.html)
+> lists the Ryzen AI Max+ 395 / Radeon 8060S (gfx1151) with production support
+> on **ROCm 7.2.1 + PyTorch 2.9.1** (FP16 is what's officially validated).
+> This repo defaults to AMD's *newer published images* (ROCm 7.2.4 base;
+> PyTorch 2.10.0 / JAX 0.8.2) — a combination AMD ships but does not list in
+> that matrix — because it measures faster and cleaner here (see the findings
+> doc). If you want to stay strictly on the AMD-validated combo, pin a
+> `rocm7.2.1`/torch-2.9.1 tag instead (see below). Cross-check the
+> [general ROCm matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html)
+> when bumping tags — framework support lags the ROCm release.
 >
 > Both images here were **verified on an actual Framework Desktop**
 > (last verified **2026-07-05**, ROCm 7.2.4 / torch 2.10.0 / jax 0.8.2): the
@@ -140,7 +144,11 @@ or `STRICT_ARCH=1` / `STRICT_DEVICE=1` to make a mismatch a hard failure.
 ## What makes the GPU visible
 
 These aren't optional decorations — they're why compute works inside the
-container:
+container. The flip side: `seccomp=unconfined`, `ipc=host`, direct GPU device
+access, and host cache/workspace mounts mean these containers are **not a
+security boundary** — treat code you run in them like code you'd run on the
+host, and don't point them at untrusted models/notebooks you wouldn't run
+natively:
 
 | Flag | Why |
 | --- | --- |

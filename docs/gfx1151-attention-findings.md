@@ -81,7 +81,11 @@ bigger batches or models, raise the UMA carveout in BIOS or keep grad-ckpt on.
    SDPA + backend report) so this class of regression is visible from the smoke
    test — the old matmul-only check sailed right past it.
 
-## 5. Bonus hygiene finding: `compose.yaml` defaults to root
+## 5. Bonus hygiene finding: `compose.yaml` defaulted to root (FIXED)
+
+> **FIXED since:** `compose.yaml` now *requires* `HOST_UID`/`HOST_GID`
+> (`${HOST_UID:?...}` — compose refuses to start without them), so the silent
+> root default described below can't happen anymore. Kept for the war story.
 
 `compose.yaml` sets `user: "${HOST_UID:-0}:${HOST_GID:-0}"` — a `docker compose
 up` **without** `HOST_UID`/`HOST_GID` exported runs as **root** and writes

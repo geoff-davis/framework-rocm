@@ -5,8 +5,10 @@
 #
 # The pins below are the versions verified working on this box's current base
 # (rocm7.2.4 / torch 2.10, gfx1151) during a bge-base fine-tune + encode
-# (2026-07-02). Uncomment what you need. For attention-heavy training use bf16 +
-# gradient checkpointing — see docs/gfx1151-attention-findings.md.
+# (2026-07-02). Uncomment what you need. For attention-heavy training use bf16
+# with AOTriton mem-efficient SDPA (the wrappers enable it by default;
+# gradient checkpointing is usually unnecessary with it) — see
+# docs/gfx1151-attention-findings.md §6.
 
 # --- Core numerics / data ---
 # numpy==2.4.6
