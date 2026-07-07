@@ -5,22 +5,31 @@
 #
 # The pins below are the versions verified working on this box's current base
 # (rocm7.2.4 / torch 2.10, gfx1151) during a bge-base fine-tune + encode
-# (2026-07-02). Uncomment what you need. For attention-heavy training use bf16
-# with AOTriton mem-efficient SDPA (the wrappers enable it by default;
-# gradient checkpointing is usually unnecessary with it) — see
+# (2026-07-02). For attention-heavy training use bf16 with AOTriton
+# mem-efficient SDPA (the wrappers enable it by default; gradient
+# checkpointing is usually unnecessary with it) — see
 # docs/gfx1151-attention-findings.md §6.
+#
+# This is the shared ML training core: the common stack projects fine-tune /
+# encode against on this box. A project needing something extra layers its own
+# thin image FROM framework-rocm:pytorch rather than forking the base.
 
 # --- Core numerics / data ---
-# numpy==2.4.6
-# polars==1.41.2
+numpy==2.4.6
+polars==1.41.2
+# pyarrow/scipy/tqdm are mostly transitive here; floored (not part of the
+# exact-pin tested-good set) so a rebuild can't fail on a guessed version.
+pyarrow>=18.0.0
+scipy>=1.14.0
+tqdm>=4.67.1
 
 # --- HuggingFace training stack (tested-good with torch 2.10 on gfx1151) ---
-# transformers==5.11.0
-# accelerate==1.14.0
-# datasets==5.0.0
-# tokenizers==0.22.2
-# safetensors==0.8.0
-# sentence-transformers==5.5.1
+transformers==5.11.0
+accelerate==1.14.0
+datasets==5.0.0
+tokenizers==0.22.2
+safetensors==0.8.0
+sentence-transformers==5.5.1
 
 # --- Notebooks (optional) ---
 # jupyterlab
