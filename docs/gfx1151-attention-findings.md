@@ -8,6 +8,21 @@ version.** **2026-07-05 update: see §6 — AOTriton mem-efficient SDPA
 (`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`) now works and supersedes the
 §1/§3/§4 conclusions.**
 
+## Current recommendation
+
+Use bf16 with AOTriton mem-efficient SDPA enabled (the wrappers default it on),
+and do not enable gradient checkpointing unless the workload still needs it.
+Run `./run.sh pytorch bench` after image or framework changes: it now fails if
+the requested efficient backend is unavailable, compares its bf16 outputs and
+gradients with the math backend, and enforces a configurable 25 ms regression
+limit at the documented shape. The JAX equivalent
+is `./run.sh jax bench`; it validates finite outputs/gradients and times XLA's
+default path without claiming that rejection of the explicit cuDNN path means
+the XLA graph is unfused.
+
+<details>
+<summary><strong>Historical 2026-07-02 findings, superseded by the current measurements</strong></summary>
+
 ## 1. ~~There is no working flash / mem-efficient attention kernel for gfx1151~~
 
 > **SUPERSEDED by §6 (2026-07-05):** on torch 2.10 / ROCm 7.2.4 the AOTriton
@@ -97,6 +112,8 @@ Suggested fix: default the compose UID/GID to the host user, or document that
 `HOST_UID`/`HOST_GID` must be exported. Clear stale root files with
 `sudo chown -R "$USER" ~/.cache/huggingface`.
 
+</details>
+
 ## 6. CORRECTION (2026-07-05): enable AOTriton mem-efficient SDPA — it's now the biggest attention lever
 
 Re-measured on the current default stack (`rocm/pytorch:rocm7.2.4…pytorch_release_2.10.0`,
@@ -111,7 +128,7 @@ not reproduce there; §1/§3/§4 above are kept for history but superseded.
 | fp32 | 117.2 ms/iter | 69.7 ms/iter (~1.7x) |
 | bf16 | 92.3 ms/iter | **8.4 ms/iter (~11x)** |
 
-The smoke test now pins each backend explicitly (`bf16 math-only` vs
+The `bench` action now pins each backend explicitly (`bf16 math-only` vs
 `bf16 mem-effic.`), so kernel availability and the gap are printed directly
 instead of inferred from warnings.
 

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 # Framework Desktop (Strix Halo / Radeon 8060S, gfx1151) ROCm + JAX image.
 #
 # Built on AMD's official rocm/jax image so ROCm, jaxlib, and the ROCm PJRT
@@ -7,7 +8,9 @@
 # Bump ROCM_JAX_TAG to move ROCm/JAX; see README for how to pick a tag. Keep the
 # JAX / jaxlib / jax-rocm7-plugin versions aligned with the ROCm major — that
 # mismatch is the usual failure mode.
-ARG ROCM_JAX_TAG=rocm7.2.4-jax0.8.2-py3.12
+# Pin the verified tag to its immutable registry digest. Overrides may be a
+# plain tag for experimentation or tag@sha256:... for reproducible builds.
+ARG ROCM_JAX_TAG=rocm7.2.4-jax0.8.2-py3.12@sha256:6a16c6afc317745f2f04519e78ca292eacd8e768c031e1fc856c9025907f6a1f
 FROM rocm/jax:${ROCM_JAX_TAG}
 
 # See notes in ./Dockerfile — same gfx1151 override story. Try native first.
@@ -19,7 +22,9 @@ WORKDIR /workspace
 # already ships the ROCm-matched build. If the base's JAX doesn't see gfx1151,
 # reinstall from AMD's gfx1151 wheel index instead (see README).
 COPY requirements-jax.txt /tmp/requirements-jax.txt
-RUN pip install --no-cache-dir -r /tmp/requirements-jax.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r /tmp/requirements-jax.txt && \
+    pip check
 
 COPY check_jax.py /usr/local/bin/check_jax.py
 RUN chmod +x /usr/local/bin/check_jax.py

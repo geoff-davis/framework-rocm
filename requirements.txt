@@ -17,11 +17,11 @@
 # --- Core numerics / data ---
 numpy==2.4.6
 polars==1.41.2
-# pyarrow/scipy/tqdm are mostly transitive here; floored (not part of the
-# exact-pin tested-good set) so a rebuild can't fail on a guessed version.
-pyarrow>=18.0.0
-scipy>=1.14.0
-tqdm>=4.67.1
+# Versions below are the ones present in the verified image. Transitive
+# dependencies are pinned in constraints-pytorch.txt.
+pyarrow==24.0.0
+scipy==1.17.1
+tqdm==4.67.3
 
 # --- HuggingFace training stack (tested-good with torch 2.10 on gfx1151) ---
 transformers==5.11.0

@@ -15,7 +15,7 @@ on this hardware — see below):
 
 They're kept separate on purpose: each framework bundles its own ROCm userspace
 libs, so separate images avoid version friction and keep pulls smaller. Both
-share the same device passthrough, gfx1151 specifics, and smoke-test pattern.
+share the same device passthrough, gfx1151 specifics, and validation pattern.
 
 **Measured on this hardware** (see
 [docs/gfx1151-attention-findings.md](docs/gfx1151-attention-findings.md) for
@@ -48,10 +48,10 @@ BERT-base shape, and a real 110M-param sentence-encoder fine-tune from
 - A Framework Desktop (Ryzen AI Max / Strix Halo) — or any gfx1151 machine.
 - A recent kernel with `amdgpu` loaded (`/dev/kfd` and `/dev/dri/renderD*` present).
 - Docker with the Compose plugin.
-- Your user in the `render` and `video` groups on the host:
-  ```bash
-  sudo usermod -aG render,video "$USER"   # then log out/in
-  ```
+
+The wrapper and Compose add the device nodes' numeric owner groups inside the
+container, so host group *names* and pre-existing `render`/`video` membership
+are not assumed. Your user still needs permission to run Docker itself.
 
 **Preflight** — each of these should succeed *before* you build anything (they
 catch most first-run failures without waiting on a multi-GB pull):
@@ -60,8 +60,7 @@ catch most first-run failures without waiting on a multi-GB pull):
 docker version && docker compose version      # docker + compose installed?
 docker run --rm hello-world                   # can run containers (no sudo)?
 ls -l /dev/kfd /dev/dri/renderD*              # GPU device nodes exist?
-groups | grep -oE 'render|video'              # you're in both groups?
-getent group render video                     # the numeric GIDs compose needs
+stat -c '%g %n' /dev/kfd /dev/dri/renderD*    # numeric GIDs compose needs
 ```
 
 ## Quick start
@@ -79,11 +78,19 @@ automatically (first arg is the framework):
 
 ```bash
 ./run.sh pytorch build
-./run.sh pytorch check          # smoke test
-./run.sh jax     check          # smoke test
+./run.sh pytorch check          # quick deterministic GPU correctness check
+./run.sh jax     check          # quick deterministic GPU correctness check
+./run.sh pytorch bench          # correctness check + attention benchmark
+./run.sh jax     bench          # same for JAX (includes XLA compilation)
 ./run.sh pytorch shell          # interactive shell
 ./run.sh jax     python your_script.py
 ```
+
+The first `bench` after an image or shape change can spend a minute compiling
+GPU kernels; subsequent runs reuse the persistent cache described below. On
+PyTorch it also fails if bf16 efficient SDPA exceeds 25 ms at the documented
+shape (verified at ~8.4 ms); set `MAX_BF16_EFFICIENT_MS=` to disable that guard
+or choose a different positive limit for other hardware.
 
 **Already a Compose user?** The same containers are defined in `compose.yaml`.
 This path needs a `.env` with host-specific GIDs + your UID/GID (`run.sh` does
@@ -93,7 +100,7 @@ not):
 cp .env.example .env      # then edit, or just generate it:
 mkdir -p ~/.cache/framework-rocm ~/.cache/huggingface && \
 printf 'RENDER_GID=%s\nVIDEO_GID=%s\nHOST_UID=%s\nHOST_GID=%s\n' \
-  "$(getent group render | cut -d: -f3)" "$(getent group video | cut -d: -f3)" \
+  "$(stat -c %g /dev/dri/renderD* | head -1)" "$(stat -c %g /dev/kfd)" \
   "$(id -u)" "$(id -g)" > .env
 ```
 
@@ -101,8 +108,10 @@ Then:
 
 ```bash
 docker compose build pytorch                                        # or: jax
-docker compose run --rm pytorch python /usr/local/bin/check_gpu.py  # smoke test
-docker compose run --rm jax     python /usr/local/bin/check_jax.py  # smoke test
+docker compose run --rm pytorch python /usr/local/bin/check_gpu.py  # quick check
+docker compose run --rm jax     python /usr/local/bin/check_jax.py  # quick check
+docker compose run --rm pytorch python /usr/local/bin/check_gpu.py --bench
+docker compose run --rm jax     python /usr/local/bin/check_jax.py --bench
 docker compose run --rm pytorch                                     # interactive shell
 ```
 
@@ -124,7 +133,7 @@ docker compose run --rm pytorch                                     # interactiv
 
 </details>
 
-A successful PyTorch smoke test looks roughly like:
+A successful PyTorch correctness check looks roughly like:
 
 ```
 torch version : 2.10.0+rocm7.2.4.git3d3aa833
@@ -132,7 +141,7 @@ ROCm/HIP ver  : 7.2.53211
 device count  : 1
   [0] Radeon 8060S Graphics
 gpu arch      : gfx1151
-matmul OK     : sum=… on Radeon 8060S Graphics
+matmul OK     : sum=1073741824.000 on Radeon 8060S Graphics
 ```
 
 …and the JAX one:
@@ -145,8 +154,9 @@ device kind   : Radeon 8060S Graphics
 matmul OK     : sum=1073741824.0 on rocm:0
 ```
 
-Both tests verify the device matches expectations, so a silent fallback to the
-wrong GPU shows up instead of passing quietly: PyTorch checks the arch string
+Both checks validate the deterministic matmul result and verify that the device
+matches expectations, so corrupt compute cannot pass merely because a kernel
+launched. PyTorch checks the arch string
 (`gfx1151`), and JAX — which doesn't expose the arch — checks the device kind
 against `Radeon 80` (matching any Strix Halo variant: 8060S, 8050S). On a
 different card, set `EXPECTED_ARCH=` / `EXPECTED_DEVICE=` to silence the warning,
@@ -206,8 +216,9 @@ natively:
 | `--security-opt seccomp=unconfined` | ROCm userspace trips the default seccomp profile. |
 | `--ipc=host` | Avoids shared-memory limits for larger tensors / dataloaders. |
 
-If names don't resolve to the right GIDs inside the container, find them on the
-host with `getent group render video` and use the numeric IDs.
+`run.sh` reads the numeric owners directly from `/dev/kfd` and
+`/dev/dri/renderD*`. For Compose, put those numeric GIDs in `.env` using the
+generator in Quick start; group names are not assumed.
 
 ## Troubleshooting
 
@@ -216,19 +227,19 @@ host with `getent group render video` and use the numeric IDs.
 | `permission denied … /var/run/docker.sock` | Your user isn't in the `docker` group → `sudo usermod -aG docker "$USER"`, re-login. |
 | `ls: cannot access '/dev/kfd'` | `amdgpu` not loaded / kernel too old → `lsmod \| grep amdgpu`, check `dmesg`, update kernel/firmware. |
 | Compose: `set VIDEO_GID in .env` | No `.env` → generate it (one-liner in Quick start / `.env.example`). |
-| `torch.cuda.is_available()` is `False` in the container | Ran without the device/group flags → use `run.sh` or Compose, not bare `docker run`; verify GIDs with `getent group render video`. |
+| `torch.cuda.is_available()` is `False` in the container | Ran without the device/group flags → use `run.sh` or Compose, not bare `docker run`; verify numeric ownership with `stat -c '%g %n' /dev/kfd /dev/dri/renderD*`. |
 | Files under `~/.cache/huggingface` owned by root | A root-run container wrote them → `sudo chown -R "$USER" ~/.cache/huggingface`; keep `HOST_UID`/`HOST_GID` set (compose refuses to default to root). |
 | Jupyter/TensorBoard unreachable | Port not published → `ROCM_PORTS="8888:8888" ./run.sh …` or `docker compose run --service-ports …`. |
 | Disk full after pulls | See usage with `docker system df`; reclaim with `docker image prune` (dangling only) — `docker system prune -a` also deletes the 17–23 GB bases you'd re-download. |
-| Attention/training unexpectedly slow | See "The gfx1151 gotcha" above (bf16 + AOTriton). |
+| Attention/training unexpectedly slow | Run `./run.sh pytorch bench`, then see "The gfx1151 gotcha" below (bf16 + AOTriton). |
 
 ## Picking versions
 
-Each image's base tag is a build arg. Browse tags, build against one, re-run the
-smoke test.
+Each image's base reference is a build arg. Browse tags, build against one, and
+rerun the correctness check and benchmark.
 
-**PyTorch** — `ROCM_PYTORCH_TAG`, default
-`rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0`
+**PyTorch** — `ROCM_PYTORCH_TAG`, default immutable reference
+`rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0@sha256:4449f856653602317e4101a76fce599c7fcd58ccec2e539951fce5f73083179e`
 ([tags](https://hub.docker.com/r/rocm/pytorch/tags)):
 
 ```bash
@@ -241,7 +252,8 @@ docker compose build --build-arg ROCM_PYTORCH_TAG=<tag> pytorch
 - AMD-validated combo (per the Ryzen matrix — see the support note up top):
   `rocm7.2.1_ubuntu24.04_py3.12_pytorch_release_2.9.1`.
 
-**JAX** — `ROCM_JAX_TAG`, default `rocm7.2.4-jax0.8.2-py3.12`
+**JAX** — `ROCM_JAX_TAG`, default immutable reference
+`rocm7.2.4-jax0.8.2-py3.12@sha256:6a16c6afc317745f2f04519e78ca292eacd8e768c031e1fc856c9025907f6a1f`
 ([tags](https://hub.docker.com/r/rocm/jax/tags)):
 
 ```bash
@@ -253,6 +265,11 @@ Keep the JAX / jaxlib / `jax-rocm7-plugin` versions aligned with the ROCm major
 — that mismatch is the usual JAX-on-ROCm failure mode. AMD's `rocm/jax` tags
 already bundle a matched set.
 
+The defaults include registry digests so the same source always selects the
+same AMD image. A plain tag override is convenient for testing but mutable;
+once verified, use `<tag>@sha256:<digest>` (obtain it with `docker buildx
+imagetools inspect <image>:<tag>`) for a repeatable build.
+
 ## The gfx1151 gotcha
 
 **Training slow?** Two levers, in order:
@@ -261,18 +278,25 @@ already bundle a matched set.
 2. **`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`** — unlocks AOTriton
    mem-efficient SDPA (~11x faster bf16 attention than the math fallback, and
    it stops materializing S×S attention, which is what OOMs training jobs).
-   `run.sh` and `compose.yaml` now set it by default; export `=0` to opt out.
+   `run.sh` and `compose.yaml` set it by default; export `=0` to opt out.
    Verified on torch 2.10 / ROCm 7.2.4 — an earlier finding that this flag was
    *slower* predates that stack and is corrected in the findings doc.
 
 With both, gradient checkpointing is usually unnecessary (it was only ever
-compensating for math-backend memory). The smoke test times attention under
-each backend so a regression is visible. Measurements and history:
+compensating for math-backend memory). The explicit `bench` action times
+attention under each backend and checks numerical agreement so a regression is
+visible. Measurements and history:
 [docs/gfx1151-attention-findings.md](docs/gfx1151-attention-findings.md).
 Bonus for GEMM-heavy jobs: PyTorch **TunableOp** (`PYTORCH_TUNABLEOP_ENABLED=1`)
 finds better GEMM kernels than the untuned gfx1151 defaults (~1.26x measured on
 a BERT fine-tune) — tune once per shape-set, then replay the CSV; details in
-the findings doc §6.
+the findings doc §6. The wrapper and Compose forward the TunableOp variables,
+so a host-side prefix works, for example:
+
+```bash
+PYTORCH_TUNABLEOP_ENABLED=1 PYTORCH_TUNABLEOP_TUNING=1 \
+  ./run.sh pytorch python train.py
+```
 
 Recent ROCm supports gfx1151 natively, but some libraries/kernels are only
 fully tuned for nearby archs and can throw `invalid device function` or
@@ -285,7 +309,7 @@ HSA_OVERRIDE_GFX_VERSION=11.0.0
 
 No file edits needed to try it: `run.sh` forwards the variable
 (`HSA_OVERRIDE_GFX_VERSION=11.0.0 ./run.sh pytorch check`), and `compose.yaml`
-has a commented `environment:` line for it; to bake it into an image there are
+forwards it when set in the shell or `.env`; to bake it into an image there are
 commented `ENV` lines in both Dockerfiles. **Try without it first** — the
 override can mask real problems and cost performance. Only enable it if the
 native path genuinely fails.
@@ -313,8 +337,8 @@ RUN pip install --no-cache-dir --force-reinstall \
     --extra-index-url https://repo.amd.com/rocm/whl/gfx1151/
 ```
 
-Run the smoke test after — if it already passes on the base image, you don't
-need this.
+Run the correctness check and benchmark afterward. If the base image already
+passes, you don't need this.
 
 ## Layout
 
@@ -325,8 +349,10 @@ compose.yaml         # two services sharing GPU passthrough (YAML anchor)
 run.sh               # plain-docker path: ./run.sh {pytorch|jax} {build|shell|check|…}
 requirements.txt     # extra deps for the PyTorch image (keep minimal)
 requirements-jax.txt # extra deps for the JAX image (keep minimal)
-check_gpu.py         # PyTorch smoke test: versions, devices, real GPU matmul
-check_jax.py         # JAX smoke test: versions, devices, real GPU matmul
+check_gpu.py         # PyTorch deterministic GPU check + optional SDPA benchmark
+check_jax.py         # JAX deterministic GPU check + optional attention benchmark
+constraints-pytorch.txt # verified non-ROCm dependency resolution
+tests/               # hardware-free regression tests for helpers/configuration
 scripts/check.sh     # hardware-free static checks (also run in CI)
 .github/workflows/   # CI: runs scripts/check.sh on push / PR
 workspace/           # bind-mounted into /workspace (git-ignored)
@@ -334,8 +360,9 @@ workspace/           # bind-mounted into /workspace (git-ignored)
 
 ## Adding Python packages
 
-Put extra deps in `requirements.txt` (PyTorch) or `requirements-jax.txt` (JAX)
-and rebuild. **Don't** re-add the framework itself — a bare `torch` pulls a
+Put extra deps in `requirements.txt` (PyTorch) or `requirements-jax.txt` (JAX),
+update `constraints-pytorch.txt` when changing the PyTorch stack, and rebuild.
+**Don't** re-add the framework itself — a bare `torch` pulls a
 CUDA/CPU wheel, and adding `jax`/`jaxlib`/`jax-rocm7-*` risks clobbering the
 ROCm-matched build already in the base image.
 
@@ -386,19 +413,20 @@ the common base tag, not from deriving from this repo's images.
 
 ## Development
 
-`scripts/check.sh` runs the hardware-free checks — shell/Python syntax, a valid
-`docker compose config`, and a guard that the default image tags in the README
-still match the authoritative `ARG` defaults in the Dockerfiles. Run it before
-pushing:
+`scripts/check.sh` runs the hardware-free checks — shell/Python syntax, unit
+tests for result validation and wrapper configuration, a valid `docker compose
+config`, environment-forwarding checks, and a guard that the default image
+references in the README match the authoritative Dockerfile defaults. Run it
+before pushing:
 
 ```bash
 ./scripts/check.sh
 ```
 
 CI (`.github/workflows/checks.yml`) runs the same script on every push and PR.
-The GPU smoke tests aren't in CI — they need a real gfx1151 machine — so run
-`./run.sh {pytorch|jax} check` locally after changing anything that touches the
-runtime.
+The GPU checks aren't in CI — they need a real gfx1151 machine — so run
+`./run.sh {pytorch|jax} check` locally after runtime changes, and run the
+corresponding `bench` action after framework, kernel, or performance changes.
 
 ## License
 

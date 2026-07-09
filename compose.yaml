@@ -4,6 +4,7 @@
 #   docker compose build pytorch               # build just one
 #   docker compose run --rm pytorch python /usr/local/bin/check_gpu.py
 #   docker compose run --rm jax     python /usr/local/bin/check_jax.py
+#   docker compose run --rm pytorch python /usr/local/bin/check_gpu.py --bench
 #   docker compose run --rm pytorch            # interactive shell
 #
 # Both services share the same GPU passthrough (via the YAML anchor below) —
@@ -11,14 +12,14 @@
 # inside the container, and matter as much as the image itself.
 
 # Shared GPU access + mounts. ROCm needs the kernel fusion driver (/dev/kfd)
-# and the DRI render nodes; the render/video groups own them; ROCm's userspace
-# trips the default seccomp profile.
+# and the DRI render nodes; their numeric owner groups grant access; ROCm's
+# userspace trips the default seccomp profile.
 #
-# The GIDs, and the host UID/GID for user mapping, come from a .env file:
-# they're host-specific, and the container's group file usually has no
-# `render`/`video` entry (passing the names fails with "unable to find group
-# render"), so numeric GIDs are required. Copy .env.example to .env and fill it
-# in — the one-liner in .env.example generates all four values. HOST_UID/GID
+# The device-owner GIDs, and the host UID/GID for user mapping, come from a .env
+# file: they're host-specific, and the container's group file usually lacks the
+# corresponding group names, so numeric GIDs are required. Copy .env.example to
+# .env and fill it in — the one-liner there reads ownership from the actual
+# device nodes and generates all four values. HOST_UID/GID
 # are required (no root fallback; see the user: key below). (The run.sh
 # wrapper needs no .env.)
 x-rocm-gpu: &rocm-gpu
@@ -39,19 +40,34 @@ x-rocm-gpu: &rocm-gpu
   environment:
     # The mapped user has no passwd entry in the container, so give it a real
     # HOME; caches ($HOME/.cache) then land in the persistent mount below.
-    HOME: /workspace
+    - HOME=/workspace
     # AOTriton mem-efficient SDPA — default ON. Without it gfx1151 attention
     # falls back to the math backend: bf16 SDPA ~11x slower, and the S×S
     # materialization OOMs training jobs. Verified faster on torch 2.10 /
     # ROCm 7.2.4 (docs/gfx1151-attention-findings.md §6). Set =0 in .env to
     # disable.
-    TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "${TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL:-1}"
+    - TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=${TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL:-1}
     # Keep torch.compile kernel caches in the persistent cache mount instead
     # of the workspace root.
-    TRITON_CACHE_DIR: /workspace/.cache/triton
-    TORCHINDUCTOR_CACHE_DIR: /workspace/.cache/inductor
-    # gfx1151 fallback — leave unset unless the native path fails (see README):
-    # HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+    - TRITON_CACHE_DIR=/workspace/.cache/triton
+    - TORCHINDUCTOR_CACHE_DIR=/workspace/.cache/inductor
+    # Runtime validation controls. Defaults retain the checks' target-hardware
+    # expectations; explicitly setting either EXPECTED value to empty disables
+    # that device-name/arch comparison.
+    - EXPECTED_ARCH=${EXPECTED_ARCH-gfx1151}
+    - STRICT_ARCH=${STRICT_ARCH-0}
+    - EXPECTED_DEVICE=${EXPECTED_DEVICE-Radeon 80}
+    - STRICT_DEVICE=${STRICT_DEVICE-0}
+    # Fail the target-shape PyTorch benchmark if the efficient kernel regresses
+    # far above its verified ~8.4 ms result. Set empty to disable the threshold.
+    - MAX_BF16_EFFICIENT_MS=${MAX_BF16_EFFICIENT_MS-25}
+    # List entries without values are forwarded only when set in the shell or
+    # .env; unset options do not become misleading empty variables.
+    - HSA_OVERRIDE_GFX_VERSION
+    - PYTORCH_TUNABLEOP_ENABLED
+    - PYTORCH_TUNABLEOP_TUNING
+    - PYTORCH_TUNABLEOP_FILENAME
+    - PYTORCH_TUNABLEOP_VERBOSE
   volumes:
     # Override the workspace via WORKSPACE_DIR in .env. The cache mount keeps
     # HF models / pip downloads / MIOpen kernel caches across runs; create the

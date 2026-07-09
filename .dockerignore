@@ -1,6 +1,6 @@
 # Keep the build context tiny — only the Dockerfiles' COPY targets are needed
-# (requirements*.txt, check_*.py). .gitignore does NOT affect Docker, so this
-# must be listed separately.
+# (requirements*.txt, constraints*.txt, check_*.py). .gitignore does NOT affect
+# Docker, so this must be listed separately.
 .git
 .gitignore
 .dockerignore

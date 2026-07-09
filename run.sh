@@ -3,18 +3,20 @@
 #
 #   ./run.sh pytorch build         # build the PyTorch image
 #   ./run.sh jax     build         # build the JAX image
-#   ./run.sh pytorch check         # run the PyTorch GPU smoke test
-#   ./run.sh jax     check         # run the JAX GPU smoke test
+#   ./run.sh pytorch check         # run the quick PyTorch GPU correctness check
+#   ./run.sh jax     check         # run the quick JAX GPU correctness check
+#   ./run.sh pytorch bench         # run correctness check + attention benchmark
+#   ./run.sh jax     bench         # run correctness check + attention benchmark
 #   ./run.sh pytorch shell         # interactive shell with the GPU attached
 #   ./run.sh jax     python x.py   # run an arbitrary command in the JAX image
 #
 # The docker run flags here are the Framework Desktop / ROCm essentials:
-# device passthrough for /dev/kfd and /dev/dri, membership in the render/video
-# groups, and a relaxed seccomp profile that ROCm's userspace requires.
+# device passthrough for /dev/kfd and /dev/dri, supplemental membership in the
+# device nodes' actual numeric owner groups, and a relaxed seccomp profile.
 #
 # Env overrides:
-#   ROCM_PYTORCH_TAG / ROCM_JAX_TAG  build a non-default base image tag
-#                                    (default lives in the Dockerfile ARG)
+#   ROCM_PYTORCH_TAG / ROCM_JAX_TAG  build a non-default base tag or tag@digest
+#                                    (immutable default is in the Dockerfile ARG)
 #   ROCM_ROOT=1                      run as root instead of your host user
 #   WORKSPACE_DIR=<path>             mount a different host dir at /workspace
 #                                    (default: ./workspace)
@@ -39,39 +41,67 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-FRAMEWORK="${1:-pytorch}"
-shift || true
-ACTION="${1:-shell}"
-shift || true
-
-case "${FRAMEWORK}" in
-  pytorch)
-    IMAGE="framework-rocm:pytorch"
-    DOCKERFILE="Dockerfile"
-    TAG_ENV="ROCM_PYTORCH_TAG"   # canonical default lives in the Dockerfile ARG
-    CHECK="/usr/local/bin/check_gpu.py"
-    ;;
-  jax)
-    IMAGE="framework-rocm:jax"
-    DOCKERFILE="Dockerfile.jax"
-    TAG_ENV="ROCM_JAX_TAG"       # canonical default lives in the Dockerfile ARG
-    CHECK="/usr/local/bin/check_jax.py"
-    ;;
-  *)
-    echo "usage: $0 {pytorch|jax} {build|shell|check|<command...>}" >&2
-    exit 2
-    ;;
-esac
-
-# Resolve the host's render/video GIDs numerically. The container's group file
-# usually has no `render`/`video` entry, so passing the names to --group-add
-# fails ("unable to find group render"); the numeric GID always works. Falls
-# back to the name if the group isn't found on the host.
-host_gid() {
-  getent group "$1" | cut -d: -f3 | grep . || echo "$1"
+is_true() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    0|false|FALSE|no|NO|off|OFF|"") return 1 ;;
+    *)
+      echo "ERROR: expected a boolean value (1/0, true/false, yes/no, on/off), got '$1'" >&2
+      return 2
+      ;;
+  esac
 }
-RENDER_GID="$(host_gid render)"
-VIDEO_GID="$(host_gid video)"
+
+# Print the unique numeric GIDs that actually own the GPU device nodes. Group
+# names are not portable across distributions and often do not exist in the
+# container, while Docker's --group-add reliably accepts the numeric owner.
+device_gids() {
+  local kfd_path="$1" dri_path="$2"
+  local render_nodes=() node gid
+  local -A seen=()
+
+  if [ ! -e "${kfd_path}" ]; then
+    echo "ERROR: ${kfd_path} does not exist; is amdgpu loaded?" >&2
+    return 1
+  fi
+  if [ ! -d "${dri_path}" ]; then
+    echo "ERROR: ${dri_path} does not exist; is amdgpu loaded?" >&2
+    return 1
+  fi
+  shopt -s nullglob
+  render_nodes=("${dri_path}"/renderD*)
+  shopt -u nullglob
+  if [ "${#render_nodes[@]}" -eq 0 ]; then
+    echo "ERROR: no render nodes found under ${dri_path}" >&2
+    return 1
+  fi
+
+  for node in "${kfd_path}" "${render_nodes[@]}"; do
+    gid="$(stat -c '%g' "${node}")"
+    if [[ ! "${gid}" =~ ^[0-9]+$ ]]; then
+      echo "ERROR: could not determine numeric group owner for ${node}" >&2
+      return 1
+    fi
+    if [[ -z "${seen[${gid}]+x}" ]]; then
+      seen["${gid}"]=1
+      printf '%s\n' "${gid}"
+    fi
+  done
+}
+
+# Append explicitly set host variables to a Docker argument array. Using -e
+# only for variables that exist preserves an intentionally empty value while
+# avoiding accidental overrides of image defaults.
+append_forwarded_env() {
+  local -n target="$1"
+  shift
+  local name
+  for name in "$@"; do
+    if [[ -v "${name}" ]]; then
+      target+=(--env "${name}=${!name}")
+    fi
+  done
+}
 
 docker_run() {
   # Only request an interactive TTY when we actually have one, so `check` and
@@ -84,7 +114,14 @@ docker_run() {
   # the bind-mounted workspace aren't root-owned. ROCM_ROOT=1 keeps root (needed
   # if you pip-install into system site-packages inside the container).
   local user_flags=()
-  if [ -z "${ROCM_ROOT:-}" ]; then
+  local root_status=0
+  if is_true "${ROCM_ROOT:-0}"; then
+    :
+  else
+    root_status=$?
+    if [ "${root_status}" -eq 2 ]; then
+      return 2
+    fi
     user_flags=(--user "$(id -u):$(id -g)")
   fi
   # Optional port mappings, e.g. ROCM_PORTS="8888:8888 6006:6006" for Jupyter
@@ -104,43 +141,101 @@ docker_run() {
   local cache_dir="${ROCM_CACHE_DIR:-${HOME}/.cache/framework-rocm}"
   local hf_cache="${ROCM_HF_CACHE:-${HOME}/.cache/huggingface}"
   mkdir -p "${cache_dir}" "${hf_cache}"
+
+  local gpu_group_flags=() gid gids
+  if ! gids="$(device_gids /dev/kfd /dev/dri)"; then
+    return 1
+  fi
+  while IFS= read -r gid; do
+    [ -n "${gid}" ] || continue
+    gpu_group_flags+=(--group-add "${gid}")
+  done <<<"${gids}"
+  if [ "${#gpu_group_flags[@]}" -eq 0 ]; then
+    echo "ERROR: no GPU device group IDs were discovered" >&2
+    return 1
+  fi
+
+  local forwarded_env=()
+  append_forwarded_env forwarded_env \
+    HSA_OVERRIDE_GFX_VERSION \
+    EXPECTED_ARCH STRICT_ARCH EXPECTED_DEVICE STRICT_DEVICE \
+    MAX_BF16_EFFICIENT_MS \
+    PYTORCH_TUNABLEOP_ENABLED PYTORCH_TUNABLEOP_TUNING \
+    PYTORCH_TUNABLEOP_FILENAME PYTORCH_TUNABLEOP_VERBOSE
+
   docker run --rm "${tty_flags[@]}" "${user_flags[@]}" "${port_flags[@]}" \
     --device=/dev/kfd \
     --device=/dev/dri \
-    --group-add "${VIDEO_GID}" \
-    --group-add "${RENDER_GID}" \
+    "${gpu_group_flags[@]}" \
     --security-opt seccomp=unconfined \
     --ipc=host \
     -e HOME=/workspace \
-    -e HSA_OVERRIDE_GFX_VERSION \
     -e "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=${TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL:-1}" \
     -e TRITON_CACHE_DIR=/workspace/.cache/triton \
     -e TORCHINDUCTOR_CACHE_DIR=/workspace/.cache/inductor \
-    -e EXPECTED_ARCH -e STRICT_ARCH -e EXPECTED_DEVICE -e STRICT_DEVICE \
+    "${forwarded_env[@]}" \
     -v "${WORKSPACE_DIR:-${HERE}/workspace}:/workspace" \
     -v "${cache_dir}:/workspace/.cache" \
     -v "${hf_cache}:/workspace/.cache/huggingface" \
     "${IMAGE}" "$@"
 }
 
-case "${ACTION}" in
-  build)
-    # Pass --build-arg only when the tag is overridden; otherwise use the
-    # Dockerfile ARG default (the single source of truth for the base tag).
-    build_args=()
-    tag_val="${!TAG_ENV:-}"
-    if [ -n "${tag_val}" ]; then
-      build_args=(--build-arg "${TAG_ENV}=${tag_val}")
-    fi
-    docker build -f "${HERE}/${DOCKERFILE}" "${build_args[@]}" -t "${IMAGE}" "${HERE}"
-    ;;
-  shell)
-    docker_run /bin/bash
-    ;;
-  check)
-    docker_run python "${CHECK}"
-    ;;
-  *)
-    docker_run "${ACTION}" "$@"
-    ;;
-esac
+main() {
+  local framework="${1:-pytorch}"
+  shift || true
+  local action="${1:-shell}"
+  shift || true
+  local image dockerfile tag_env check
+
+  case "${framework}" in
+    pytorch)
+      image="framework-rocm:pytorch"
+      dockerfile="Dockerfile"
+      tag_env="ROCM_PYTORCH_TAG"   # canonical default lives in the Dockerfile ARG
+      check="/usr/local/bin/check_gpu.py"
+      ;;
+    jax)
+      image="framework-rocm:jax"
+      dockerfile="Dockerfile.jax"
+      tag_env="ROCM_JAX_TAG"       # canonical default lives in the Dockerfile ARG
+      check="/usr/local/bin/check_jax.py"
+      ;;
+    *)
+      echo "usage: $0 {pytorch|jax} {build|shell|check|bench|<command...>}" >&2
+      return 2
+      ;;
+  esac
+
+  # docker_run reads IMAGE so arbitrary commands and the named actions share
+  # exactly the same runtime configuration.
+  IMAGE="${image}"
+  export IMAGE
+
+  case "${action}" in
+    build)
+      # Pass --build-arg only when the tag is overridden; otherwise use the
+      # Dockerfile ARG default (the single source of truth for the base tag).
+      local build_args=() tag_val="${!tag_env:-}"
+      if [ -n "${tag_val}" ]; then
+        build_args=(--build-arg "${tag_env}=${tag_val}")
+      fi
+      docker build -f "${HERE}/${dockerfile}" "${build_args[@]}" -t "${image}" "${HERE}"
+      ;;
+    shell)
+      docker_run /bin/bash
+      ;;
+    check)
+      docker_run python "${check}"
+      ;;
+    bench)
+      docker_run python "${check}" --bench
+      ;;
+    *)
+      docker_run "${action}" "$@"
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
