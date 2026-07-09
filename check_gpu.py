@@ -11,6 +11,7 @@ To guard against a silent fallback to the wrong GPU/arch, it also checks the
 device's arch against EXPECTED_ARCH (default "gfx1151"). A mismatch prints a
 warning; set STRICT_ARCH=1 to make it a hard failure, or EXPECTED_ARCH= to skip.
 """
+
 import argparse
 import math
 import os
@@ -70,11 +71,15 @@ def main(argv=None) -> int:
 
     if not torch.cuda.is_available():
         # On ROCm builds, torch.cuda is the HIP backend.
-        print("ERROR: no GPU visible to PyTorch (torch.cuda.is_available() is False).",
-              file=sys.stderr)
-        print("Check device passthrough (--device=/dev/kfd --device=/dev/dri) and "
-              "that your user is in the render/video groups on the host.",
-              file=sys.stderr)
+        print(
+            "ERROR: no GPU visible to PyTorch (torch.cuda.is_available() is False).",
+            file=sys.stderr,
+        )
+        print(
+            "Check device passthrough (--device=/dev/kfd --device=/dev/dri) and "
+            "supplemental numeric groups matching the device-node owners.",
+            file=sys.stderr,
+        )
         return 1
 
     count = torch.cuda.device_count()
@@ -91,9 +96,11 @@ def main(argv=None) -> int:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
     if expected and expected not in arch:
-        print(f"WARNING: expected arch '{expected}' not in '{arch}' — wrong GPU "
-              "or a fallback may be active (set EXPECTED_ARCH= to silence).",
-              file=sys.stderr)
+        print(
+            f"WARNING: expected arch '{expected}' not in '{arch}' — wrong GPU "
+            "or a fallback may be active (set EXPECTED_ARCH= to silence).",
+            file=sys.stderr,
+        )
         if strict_arch:
             return 3
 
@@ -145,9 +152,10 @@ def _validate_efficient_attention(torch, F, dev, math_backend, efficient_backend
     try:
         reference = evaluate(math_backend)
         candidate = evaluate(efficient_backend)
-        tensors = (("output", candidate[0], reference[0]),) + tuple(
+        tensors = [("output", candidate[0], reference[0])]
+        tensors.extend(
             (f"grad-{name}", actual, expected)
-            for name, actual, expected in zip("qkv", candidate[1], reference[1])
+            for name, actual, expected in zip("qkv", candidate[1], reference[1], strict=True)
         )
         for label, actual, expected in tensors:
             if not bool(torch.isfinite(actual).all().item()):
@@ -202,6 +210,7 @@ def _bench_attention(torch, dev) -> bool:
 
         try:
             from torch.nn.attention import sdpa_kernel
+
             ctx = sdpa_kernel([backend]) if backend is not None else nullcontext()
         except ImportError:  # torch < 2.3
             ctx = nullcontext()

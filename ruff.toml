@@ -1,0 +1,15 @@
+target-version = "py312"
+line-length = 100
+
+[lint]
+select = [
+  "B",   # flake8-bugbear
+  "BLE", # flake8-blind-except (benchmark probes use narrow noqa comments)
+  "E4",  # pycodestyle imports
+  "E7",  # pycodestyle statements
+  "E9",  # runtime/syntax errors
+  "F",   # Pyflakes
+  "I",   # import ordering
+  "RUF", # Ruff-specific correctness rules
+  "UP",  # modern Python syntax
+]

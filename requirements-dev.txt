@@ -1,0 +1,4 @@
+# Hardware-free development tools. Keep exact pins so local and CI diagnostics
+# do not change underneath an unrelated patch.
+ruff==0.15.20
+shellcheck-py==0.11.0.1

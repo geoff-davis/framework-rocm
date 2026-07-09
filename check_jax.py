@@ -13,6 +13,7 @@ it checks the device's reported kind against EXPECTED_DEVICE (default
 a warning; set STRICT_DEVICE=1 to make it a hard failure, or EXPECTED_DEVICE=
 to skip.
 """
+
 import argparse
 import math
 import os
@@ -56,8 +57,9 @@ def main(argv=None) -> int:
     print(f"jax version   : {jax.__version__}")
     try:
         import jaxlib
+
         print(f"jaxlib version: {jaxlib.__version__}")
-    except Exception:
+    except ImportError:
         pass
 
     devices = jax.devices()
@@ -67,12 +69,13 @@ def main(argv=None) -> int:
     # the hood). If the only device is CPU, the GPU backend didn't load.
     gpu_devices = [d for d in devices if d.platform == "gpu"]
     if not gpu_devices:
-        print("ERROR: no GPU device visible to JAX (only CPU backend loaded).",
-              file=sys.stderr)
-        print("Check device passthrough (--device=/dev/kfd --device=/dev/dri), "
-              "render/video group membership, and that the base image's JAX "
-              "includes gfx1151 (see README for the AMD gfx1151 wheel fallback).",
-              file=sys.stderr)
+        print("ERROR: no GPU device visible to JAX (only CPU backend loaded).", file=sys.stderr)
+        print(
+            "Check device passthrough (--device=/dev/kfd --device=/dev/dri), "
+            "supplemental numeric device-owner groups, and that the base image's JAX "
+            "includes gfx1151 (see README for the AMD gfx1151 wheel fallback).",
+            file=sys.stderr,
+        )
         return 1
 
     dev = gpu_devices[0]
@@ -85,9 +88,11 @@ def main(argv=None) -> int:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
     if expected and expected not in kind:
-        print(f"WARNING: expected device '{expected}' not in '{kind}' — wrong GPU "
-              "or a fallback may be active (set EXPECTED_DEVICE= to silence).",
-              file=sys.stderr)
+        print(
+            f"WARNING: expected device '{expected}' not in '{kind}' — wrong GPU "
+            "or a fallback may be active (set EXPECTED_DEVICE= to silence).",
+            file=sys.stderr,
+        )
         if strict_device:
             return 3
 
@@ -131,9 +136,11 @@ def _bench_attention(jax, jnp, dev) -> bool:
         key = jax.random.PRNGKey(0)
         kq, kk, kv = jax.random.split(key, 3)
         shape = (B, S, H, D)
-        return (jax.device_put(jax.random.normal(kq, shape, dtype), dev),
-                jax.device_put(jax.random.normal(kk, shape, dtype), dev),
-                jax.device_put(jax.random.normal(kv, shape, dtype), dev))
+        return (
+            jax.device_put(jax.random.normal(kq, shape, dtype), dev),
+            jax.device_put(jax.random.normal(kk, shape, dtype), dev),
+            jax.device_put(jax.random.normal(kv, shape, dtype), dev),
+        )
 
     try:
         q, k, v = make_qkv(jnp.float32)

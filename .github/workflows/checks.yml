@@ -1,6 +1,6 @@
 name: checks
 
-# Static, hardware-free checks — the GPU smoke tests need a gfx1151 machine and
+# Static, hardware-free checks — the GPU checks need a gfx1151 machine and
 # can't run on GitHub-hosted runners, so CI covers everything that doesn't.
 on:
   push:
@@ -14,5 +14,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          cache: pip
+      - name: Install pinned development tools
+        run: python -m pip install -r requirements-dev.txt
       - name: Run static checks
         run: ./scripts/check.sh

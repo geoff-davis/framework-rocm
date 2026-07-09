@@ -349,6 +349,8 @@ compose.yaml         # two services sharing GPU passthrough (YAML anchor)
 run.sh               # plain-docker path: ./run.sh {pytorch|jax} {build|shell|check|…}
 requirements.txt     # extra deps for the PyTorch image (keep minimal)
 requirements-jax.txt # extra deps for the JAX image (keep minimal)
+requirements-dev.txt # exact Ruff/ShellCheck versions for local checks and CI
+ruff.toml             # Python lint and formatting policy
 check_gpu.py         # PyTorch deterministic GPU check + optional SDPA benchmark
 check_jax.py         # JAX deterministic GPU check + optional attention benchmark
 constraints-pytorch.txt # verified non-ROCm dependency resolution
@@ -413,15 +415,20 @@ the common base tag, not from deriving from this repo's images.
 
 ## Development
 
-`scripts/check.sh` runs the hardware-free checks — shell/Python syntax, unit
-tests for result validation and wrapper configuration, a valid `docker compose
-config`, environment-forwarding checks, and a guard that the default image
-references in the README match the authoritative Dockerfile defaults. Run it
-before pushing:
+`scripts/check.sh` runs the hardware-free checks — ShellCheck, Ruff lint and
+format validation, shell/Python syntax, unit tests for result validation and
+wrapper configuration, a valid `docker compose config`, environment-forwarding
+checks, and a guard that the default image references in the README match the
+authoritative Dockerfile defaults. Run it with the exact tool versions from
+`requirements-dev.txt` before pushing (the isolated environment leaves the
+ROCm/runtime Python installation alone):
 
 ```bash
-./scripts/check.sh
+uv run --isolated --with-requirements requirements-dev.txt ./scripts/check.sh
 ```
+
+If you already installed `requirements-dev.txt` into an active development
+environment, running `./scripts/check.sh` directly is equivalent.
 
 CI (`.github/workflows/checks.yml`) runs the same script on every push and PR.
 The GPU checks aren't in CI — they need a real gfx1151 machine — so run

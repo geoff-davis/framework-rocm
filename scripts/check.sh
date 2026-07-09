@@ -2,9 +2,9 @@
 # Static checks — no GPU and no image build required. Run before pushing; CI
 # runs the same script (.github/workflows/checks.yml). Catches the regressions
 # that don't need hardware: shell/python syntax, a valid compose config, and
-# README tag drift vs the authoritative Dockerfile ARG defaults.
+# lint, and README reference drift vs the authoritative Dockerfile ARG defaults.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit
 
 fail=0
 note() { printf '  %s\n' "$*"; }
@@ -13,8 +13,25 @@ bad()  { printf '  ERROR: %s\n' "$*"; fail=1; }
 echo "== bash syntax =="
 if bash -n run.sh scripts/check.sh; then note "shell scripts OK"; else bad "shell syntax error"; fi
 
+echo "== shellcheck =="
+if ! command -v shellcheck >/dev/null 2>&1; then
+  bad "shellcheck is unavailable — use the uv command in README.md#development"
+elif shellcheck run.sh scripts/check.sh tests/test_run.sh; then
+  note "ShellCheck OK"
+else
+  bad "ShellCheck failed"
+fi
+
 echo "== python compile =="
 if python3 -m py_compile check_gpu.py check_jax.py tests/test_checks.py; then note "Python syntax OK"; else bad "python syntax error"; fi
+
+echo "== ruff =="
+if ! command -v ruff >/dev/null 2>&1; then
+  bad "ruff is unavailable — use the uv command in README.md#development"
+else
+  if ruff check check_gpu.py check_jax.py tests; then note "Ruff lint OK"; else bad "Ruff lint failed"; fi
+  if ruff format --check check_gpu.py check_jax.py tests; then note "Ruff format OK"; else bad "Ruff format failed"; fi
+fi
 
 echo "== hardware-free tests =="
 if python3 -m unittest discover -s tests -p 'test_*.py'; then note "Python tests OK"; else bad "Python tests failed"; fi
