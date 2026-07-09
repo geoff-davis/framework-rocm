@@ -76,6 +76,27 @@ check_image_ref() {
 check_image_ref Dockerfile     ROCM_PYTORCH_TAG
 check_image_ref Dockerfile.jax ROCM_JAX_TAG
 
+echo "== immutable GitHub Actions references =="
+shopt -s nullglob
+workflow_files=(.github/workflows/*.yml .github/workflows/*.yaml)
+shopt -u nullglob
+for workflow in "${workflow_files[@]}"; do
+  while IFS= read -r action; do
+    case "${action}" in
+      ./*|docker://*) continue ;;
+    esac
+    if [[ "${action}" =~ @[0-9a-f]{40}$ ]]; then
+      note "pinned ${action%@*}"
+    else
+      bad "${workflow} uses mutable action reference '${action}'"
+    fi
+  done < <(
+    sed -nE \
+      's/^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*([^[:space:]#]+).*/\2/p' \
+      "${workflow}"
+  )
+done
+
 echo "== direct PyTorch dependencies are exactly constrained =="
 while IFS= read -r requirement; do
   [[ -z "${requirement}" || "${requirement}" == \#* ]] && continue

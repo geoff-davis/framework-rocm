@@ -453,6 +453,9 @@ If you already installed `requirements-dev.txt` into an active development
 environment, running `./scripts/check.sh` directly is equivalent.
 
 CI (`.github/workflows/checks.yml`) runs the same script on every push and PR.
+Third-party actions are pinned to immutable Git commit SHAs; keep the readable
+version comments and SHAs together when updating them. The static checks reject
+mutable action tags.
 The GPU checks aren't in CI — they need a real gfx1151 machine — so run
 `./run.sh {pytorch|jax} check` locally after runtime changes, and run the
 corresponding `bench` action after framework, kernel, or performance changes.
