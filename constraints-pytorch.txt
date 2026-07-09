@@ -1,8 +1,9 @@
-# Resolved non-ROCm dependency set from the verified PyTorch image.
+# Version constraints feeding requirements-pytorch.lock generation, captured
+# from the verified PyTorch image.
 #
-# Regenerate after deliberately updating requirements.txt, then rerun both
-# ./scripts/check.sh and ./run.sh pytorch bench. ROCm-owned packages (torch,
-# torchvision, torchaudio, triton, apex) are intentionally excluded: they must
+# After deliberately updating these constraints or requirements.txt, regenerate
+# the lock as documented in README. ROCm-owned packages (torch, torchvision,
+# torchaudio, triton, apex) are intentionally excluded from the lock: they must
 # continue to come from the digest-pinned AMD base image.
 accelerate==1.14.0
 aiohappyeyeballs==2.7.1

@@ -17,8 +17,8 @@
 # --- Core numerics / data ---
 numpy==2.4.6
 polars==1.41.2
-# Versions below are the ones present in the verified image. Transitive
-# dependencies are pinned in constraints-pytorch.txt.
+# Versions below are the ones present in the verified image. The fully resolved
+# non-ROCm closure and exact target-wheel hashes are in requirements-pytorch.lock.
 pyarrow==24.0.0
 scipy==1.17.1
 tqdm==4.67.3

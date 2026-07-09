@@ -23,14 +23,14 @@ else
 fi
 
 echo "== python compile =="
-if python3 -m py_compile check_gpu.py check_jax.py tests/test_checks.py; then note "Python syntax OK"; else bad "python syntax error"; fi
+if python3 -m py_compile check_gpu.py check_jax.py scripts/lock_dependencies.py tests/test_checks.py tests/test_lock_dependencies.py; then note "Python syntax OK"; else bad "python syntax error"; fi
 
 echo "== ruff =="
 if ! command -v ruff >/dev/null 2>&1; then
   bad "ruff is unavailable — use the uv command in README.md#development"
 else
-  if ruff check check_gpu.py check_jax.py tests; then note "Ruff lint OK"; else bad "Ruff lint failed"; fi
-  if ruff format --check check_gpu.py check_jax.py tests; then note "Ruff format OK"; else bad "Ruff format failed"; fi
+  if ruff check check_gpu.py check_jax.py scripts/lock_dependencies.py tests; then note "Ruff lint OK"; else bad "Ruff lint failed"; fi
+  if ruff format --check check_gpu.py check_jax.py scripts/lock_dependencies.py tests; then note "Ruff format OK"; else bad "Ruff format failed"; fi
 fi
 
 echo "== hardware-free tests =="
@@ -87,6 +87,18 @@ while IFS= read -r requirement; do
     bad "requirements.txt entry missing from constraints-pytorch.txt: ${requirement}"
   fi
 done < requirements.txt
+
+echo "== hash-checked PyTorch dependency lock =="
+if python3 scripts/lock_dependencies.py --check; then
+  note "target-wheel hashes and ROCm exclusions OK"
+else
+  bad "requirements-pytorch.lock is invalid or stale"
+fi
+if grep -qF -- "pip install --require-hashes --only-binary=:all: --no-deps" Dockerfile; then
+  note "Docker build enforces hashes, wheels, and the resolved closure"
+else
+  bad "Dockerfile does not enforce the hash-checked binary-only lock"
+fi
 
 echo
 if [ "${fail}" -eq 0 ]; then echo "All static checks passed."; else echo "Static checks FAILED."; fi

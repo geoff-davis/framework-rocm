@@ -1,0 +1,8 @@
+# Packages supplied by the digest-pinned AMD base image. Lock generation must
+# exclude these names so a PyPI CPU/CUDA framework build can never enter the
+# non-ROCm dependency lock.
+apex
+torch
+torchaudio
+torchvision
+triton

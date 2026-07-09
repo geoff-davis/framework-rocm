@@ -1,4 +1,6 @@
-# Hardware-free development tools. Keep exact pins so local and CI diagnostics
-# do not change underneath an unrelated patch.
+# Hardware-free lint and lock-generation tools. Keep exact pins so diagnostics
+# and selected wheel artifacts do not change underneath an unrelated patch.
+pip==26.1.2
 ruff==0.15.20
 shellcheck-py==0.11.0.1
+uv==0.9.22

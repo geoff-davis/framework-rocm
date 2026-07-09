@@ -1,6 +1,5 @@
-# Keep the build context tiny — only the Dockerfiles' COPY targets are needed
-# (requirements*.txt, constraints*.txt, check_*.py). .gitignore does NOT affect
-# Docker, so this must be listed separately.
+# Exclude repository and runtime-only content from the Docker build context.
+# .gitignore does not affect Docker, so exclusions must be listed separately.
 .git
 .gitignore
 .dockerignore

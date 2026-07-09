@@ -23,12 +23,15 @@ ENV PYTORCH_ROCM_ARCH=gfx1151
 
 WORKDIR /workspace
 
-# Extra Python deps go here so they're baked into the image and cached.
-COPY requirements.txt /tmp/requirements.txt
-COPY constraints-pytorch.txt /tmp/constraints-pytorch.txt
+# Install the fully resolved non-ROCm closure from exact target-wheel hashes.
+# --no-deps is intentional: the lock already enumerates the closure, while the
+# digest-pinned AMD base remains the sole owner of torch/torchvision/ROCm libs.
+COPY requirements-pytorch.lock /tmp/requirements-pytorch.lock
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r /tmp/requirements.txt -c /tmp/constraints-pytorch.txt && \
-    pip check
+    pip install --require-hashes --only-binary=:all: --no-deps \
+      -r /tmp/requirements-pytorch.lock && \
+    pip check && \
+    python -c "import torch; assert torch.version.hip, 'ROCm torch was replaced'"
 
 # A deterministic GPU correctness check available on the PATH in the container.
 COPY check_gpu.py /usr/local/bin/check_gpu.py

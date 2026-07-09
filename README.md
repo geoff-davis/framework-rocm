@@ -350,10 +350,13 @@ run.sh               # plain-docker path: ./run.sh {pytorch|jax} {build|shell|ch
 requirements.txt     # extra deps for the PyTorch image (keep minimal)
 requirements-jax.txt # extra deps for the JAX image (keep minimal)
 requirements-dev.txt # exact Ruff/ShellCheck versions for local checks and CI
+requirements-pytorch.lock # generated target-wheel versions + SHA-256 hashes
+requirements-rocm-base.txt # framework packages owned only by the AMD base
 ruff.toml             # Python lint and formatting policy
 check_gpu.py         # PyTorch deterministic GPU check + optional SDPA benchmark
 check_jax.py         # JAX deterministic GPU check + optional attention benchmark
-constraints-pytorch.txt # verified non-ROCm dependency resolution
+constraints-pytorch.txt # verified versions feeding lock generation
+scripts/lock_dependencies.py # target-specific lock generator and verifier
 tests/               # hardware-free regression tests for helpers/configuration
 scripts/check.sh     # hardware-free static checks (also run in CI)
 .github/workflows/   # CI: runs scripts/check.sh on push / PR
@@ -362,8 +365,26 @@ workspace/           # bind-mounted into /workspace (git-ignored)
 
 ## Adding Python packages
 
-Put extra deps in `requirements.txt` (PyTorch) or `requirements-jax.txt` (JAX),
-update `constraints-pytorch.txt` when changing the PyTorch stack, and rebuild.
+Put direct dependencies in `requirements.txt` (PyTorch) or
+`requirements-jax.txt` (JAX). For PyTorch, update `constraints-pytorch.txt`
+with the deliberately selected versions, then regenerate the binary-only,
+target-specific hash lock:
+
+```bash
+uv run --isolated --python 3.12 --with-requirements requirements-dev.txt \
+  python scripts/lock_dependencies.py
+```
+
+The generator runs only on CPython 3.12/Linux x86_64, resolves the complete
+non-ROCm closure, selects the exact wheel using the container's glibc 2.39
+compatibility ceiling rather than the host's potentially newer libc, and
+records its SHA-256 hash in `requirements-pytorch.lock`. Docker installs that
+lock with `--require-hashes --only-binary=:all: --no-deps`, then runs `pip
+check` and verifies that torch still reports a HIP runtime. `--no-deps` is safe
+here because every non-ROCm transitive dependency is an explicit lock entry;
+it also prevents pip from resolving a PyPI torch build.
+
+Review the generated lock diff, rebuild, and run `./run.sh pytorch bench`.
 **Don't** re-add the framework itself — a bare `torch` pulls a
 CUDA/CPU wheel, and adding `jax`/`jaxlib`/`jax-rocm7-*` risks clobbering the
 ROCm-matched build already in the base image.
@@ -417,9 +438,10 @@ the common base tag, not from deriving from this repo's images.
 
 `scripts/check.sh` runs the hardware-free checks — ShellCheck, Ruff lint and
 format validation, shell/Python syntax, unit tests for result validation and
-wrapper configuration, a valid `docker compose config`, environment-forwarding
-checks, and a guard that the default image references in the README match the
-authoritative Dockerfile defaults. Run it with the exact tool versions from
+wrapper/lock configuration, a valid `docker compose config`, environment
+forwarding, target-wheel hash and ROCm-exclusion checks, and a guard that the
+default image references in the README match the authoritative Dockerfile
+defaults. Run it with the exact tool versions from
 `requirements-dev.txt` before pushing (the isolated environment leaves the
 ROCm/runtime Python installation alone):
 
